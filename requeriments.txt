@@ -1,0 +1,10 @@
+streamlit
+pandas
+requests
+urllib3
+plotly
+sqlalchemy
+Pillow
+python-dotenv
+streamlit-autorefresh
+supabase
