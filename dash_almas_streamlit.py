@@ -1,16 +1,11 @@
-import requests
 import pandas as pd
-import urllib3
 import plotly.graph_objects as go
 import streamlit as st
 import base64
 import os
-import time
 
-from sqlalchemy import create_engine
 from datetime import datetime, timedelta
 from PIL import Image
-from streamlit_autorefresh import st_autorefresh
 from io import BytesIO
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -187,7 +182,7 @@ def gerar_grafico_colunas_mina(df_agrupado, valor_referencia=None, titulo='Títu
             range=[yaxis_min, yaxis_max] if yaxis_min is not None and yaxis_max is not None else None
         ),
         bargap=0.2,
-        margin=dict(t=40, b=100, l=0, r=0),
+        margin=dict(t=40, b=70, l=0, r=0),
         plot_bgcolor='white',
         paper_bgcolor='white',
         height=300
@@ -402,7 +397,7 @@ def gerar_grafico_colunas_planta(df_agrupado, valor_referencia=None, titulo='Tí
             range=[yaxis_min, yaxis_max] if yaxis_min is not None and yaxis_max is not None else None
         ),
         bargap=0.2,
-        margin=dict(t=40, b=100, l=0, r=0),
+        margin=dict(t=40, b=70, l=0, r=0),
         plot_bgcolor='white',
         paper_bgcolor='white',
         height=300
@@ -544,7 +539,7 @@ def gerar_grafico_linha_planta(df_linha, titulo='Título do Gráfico', yaxis_min
             visible=False,
             range=[yaxis_min, yaxis_max] if yaxis_min is not None and yaxis_max is not None else None
         ),
-        margin=dict(t=40, b=100, l=0, r=0),
+        margin=dict(t=40, b=70, l=0, r=0),
         plot_bgcolor='white',
         paper_bgcolor='white',
         height=300
@@ -565,58 +560,49 @@ grafico_linha = gerar_grafico_linha_planta(
     yaxis_min=0,
     yaxis_max=307
 )
+
 # =============================================
 # Dashboard em Streamlit
 # =============================================
+
 # ========== Configuração da página ==========
 st.set_page_config(layout="wide")
 
-# ========== Reduzir espaçamento do topo da página ==========
-# CSS para reduzir espaços verticais
+# ========== Estilo CSS otimizado para Full HD ==========
 st.markdown("""
     <style>
         .block-container {
-            padding-top: 0rem !important;
+            padding-top: 3rem !important;
             padding-bottom: 0rem !important;
+            max-width: 1900px;
+            margin: auto;
         }
-        .main {
-            padding-top: 0rem !important;
-        }
-        header {
-            margin: 0rem !important;
-            padding: 0rem !important;
+        header, .main {
+            padding-top: 0.5rem !important;
         }
         h1, h2, h3 {
-            margin-top: 5px !important;
-            margin-bottom: 5px !important;
+            margin-top: 0px !important;
+            margin-bottom: 0px !important;
             padding: 0 !important;
         }
-        .element-container {
-            margin-bottom: 0rem !important;
-            padding-bottom: 0rem !important;
-        }
         .stPlotlyChart {
-            padding: 0rem !important;
-            margin-top: 0rem !important;
-            margin-bottom: 0rem !important;
+            padding: 0 !important;
+            margin: 0 !important;
         }
     </style>
 """, unsafe_allow_html=True)
 
-# Carrega a imagem do logo
-pasta_atual = os.path.dirname(__file__)  # pasta onde está o script atual
-
+# ========== Carregamento de logos ==========
+pasta_atual = os.path.dirname(__file__)
 logo_aura = os.path.join(pasta_atual, "Icones", "Logo_Aura.jpg")
 logo_mina = os.path.join(pasta_atual, "Icones", "escavadora.png")
 logo_moagem = os.path.join(pasta_atual, "Icones", "mill.png")
 
-# Função para converter imagem para base64 e retornar também o tipo MIME correto
 def imagem_para_base64_e_tipo(caminho_imagem):
     imagem = Image.open(caminho_imagem)
     buffer = BytesIO()
-    
     extensao = os.path.splitext(caminho_imagem)[1].lower()
-    if extensao == '.jpg' or extensao == '.jpeg':
+    if extensao in ['.jpg', '.jpeg']:
         formato = 'JPEG'
         mime_type = 'image/jpeg'
     elif extensao == '.png':
@@ -624,92 +610,61 @@ def imagem_para_base64_e_tipo(caminho_imagem):
         mime_type = 'image/png'
     else:
         raise ValueError(f"Formato de imagem não suportado: {extensao}")
-    
     imagem.save(buffer, format=formato)
     imagem_base64 = base64.b64encode(buffer.getvalue()).decode()
     return imagem_base64, mime_type
 
-# Geração das imagens com tipo MIME
 base64_esquerda, tipo_esquerda = imagem_para_base64_e_tipo(logo_mina)
 base64_esquerda2, tipo_esquerda2 = imagem_para_base64_e_tipo(logo_moagem)
 base64_direita, tipo_direita = imagem_para_base64_e_tipo(logo_aura)
 
-# HTML do cabeçalho estilizado mina
+# =============================================
+# Renderização do Dashboard em Tela Única (Full HD)
+# =============================================
+
+# Cabeçalho Mina
 st.markdown(f"""
-    <div style="
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        background-color: #2D3D70;
-        padding: 0px 30px;
-        border-radius: 8px;
-        margin-bottom: 10px;
-    ">
-        <img src="data:{tipo_esquerda};base64,{base64_esquerda}" style="height: 50px;">
-        <h1 style="color: white; font-size: 35px; margin: 0;">
-            Movimentação Mina Paiol - Aura Almas
-        </h1>
-        <img src="data:{tipo_direita};base64,{base64_direita}" style="height: 70px;">
+    <div style="display: flex; justify-content: space-between; align-items: center;
+        background-color: #2D3D70; padding: 0px 30px; border-radius: 8px; margin-bottom: 5px;">
+        <img src="data:{tipo_esquerda};base64,{base64_esquerda}" style="height: 45px;">
+        <h1 style="color: white; font-size: 28px; margin: 0;">Movimentação Mina Paiol - Aura Almas</h1>
+        <img src="data:{tipo_direita};base64,{base64_direita}" style="height: 40px;">
     </div>
 """, unsafe_allow_html=True)
 
-# Pequeno espaço negativo para colar os gráficos no título
-st.markdown('<div style="margin-top: -50px;"></div>', unsafe_allow_html=True)
-
-# Primeira linha de gráficos lado a lado (mina)
-col1, col2 = st.columns([1, 1], gap="medium")
-
+# Linha 1 - Total / Minério
+col1, col2 = st.columns([0.5, 0.5], gap="small")
 with col1:
     if not df_agg_total.empty:
-        st.plotly_chart(grafico_total, use_container_width=False)
-
+        st.plotly_chart(grafico_total.update_layout(height=240), use_container_width=True)
 with col2:
     if not df_agg_minerio.empty:
-        st.plotly_chart(grafico_minerio, use_container_width=False)
+        st.plotly_chart(grafico_minerio.update_layout(height=240), use_container_width=True)
 
-# Reduz espaço entre primeira e segunda linha de colunas
-st.markdown('<div style="margin-top: -50px;"></div>', unsafe_allow_html=True)
-
-# Segunda linha de gráficos lado a lado (mina)
-col3, col4 = st.columns([1, 1], gap="medium")
-
+# Linha 2 - Viagens / Estéril
+col3, col4 = st.columns([0.5, 0.5], gap="small")
 with col3:
     if not df_agg_viagens.empty:
-        st.plotly_chart(grafico_numero_viagens, use_container_width=True)
-
+        st.plotly_chart(grafico_numero_viagens.update_layout(height=240), use_container_width=True)
 with col4:
     if not df_agg_esteril.empty:
-        st.plotly_chart(grafico_esteril, use_container_width=True)
+        st.plotly_chart(grafico_esteril.update_layout(height=240), use_container_width=True)
 
-# HTML do cabeçalho estilizado moagem
+# Cabeçalho Moagem
 st.markdown(f"""
-    <div style="
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        background-color: #2D3D70;
-        padding: 0px 30px;
-        border-radius: 8px;
-        margin-bottom: 10px;
-    ">
-        <img src="data:{tipo_esquerda2};base64,{base64_esquerda2}" style="height: 70px;">
-        <h1 style="color: white; font-size: 35px; margin: 0;">
-            Alimentação Moagem - Aura Almas
-        </h1>
-        <img src="data:{tipo_direita};base64,{base64_direita}" style="height: 70px;">
+    <div style="display: flex; justify-content: space-between; align-items: center;
+        background-color: #2D3D70; padding: 0px 30px; border-radius: 8px; margin-top: 5px; margin-bottom: 5px;">
+        <img src="data:{tipo_esquerda2};base64,{base64_esquerda2}" style="height: 40px;">
+        <h1 style="color: white; font-size: 28px; margin: 0;">Alimentação Moagem - Aura Almas</h1>
+        <img src="data:{tipo_direita};base64,{base64_direita}" style="height: 40px;">
     </div>
 """, unsafe_allow_html=True)
 
-# Pequeno espaço negativo para colar os gráficos no título
-st.markdown('<div style="margin-top: -100px;"></div>', unsafe_allow_html=True)
-
-#Terceira linha de gráficos lado a lado (planta)
-col5, col6 = st.columns([1, 1], gap="medium")
-
+# Linha 3 - Totalizador / Média Móvel
+col5, col6 = st.columns([0.5, 0.5], gap="small")
 with col5:
     if not df_agg_totalizador.empty:
-        st.plotly_chart(grafico_totalizador, use_container_width=True)
-
+        st.plotly_chart(grafico_totalizador.update_layout(height=240), use_container_width=True)
 with col6:
     if not df_linha_planta.empty:
-        st.plotly_chart(grafico_linha, use_container_width=True)
+        st.plotly_chart(grafico_linha.update_layout(height=240), use_container_width=True)
