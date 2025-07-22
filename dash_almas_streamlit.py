@@ -30,13 +30,26 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Função para ler os dados das tabelas
-def ler_dados_supabase(tabela: str) -> pd.DataFrame:
-    """
-    Lê todos os dados de uma tabela no Supabase e retorna um DataFrame.
-    """
-    resposta = supabase.table(tabela).select("*").execute()
-    dados = resposta.data
-    return pd.DataFrame(dados)
+# Função para ler os dados das tabelas
+def ler_dados_supabase(tabela: str, pagina_tamanho: int = 1000) -> pd.DataFrame:
+    offset = 0
+    dados_completos = []
+
+    while True:
+        resposta = (
+            supabase
+            .table(tabela)
+            .select("*")
+            .range(offset, offset + pagina_tamanho - 1)  # define o intervalo de linhas
+            .execute()
+        )
+        dados = resposta.data
+        if not dados:
+            break  # terminou de puxar todas as linhas
+        dados_completos.extend(dados)
+        offset += pagina_tamanho
+
+    return pd.DataFrame(dados_completos)
 
 # Lê dados da tabela 'movimentacao_mina'
 df_transporte_filtrado = ler_dados_supabase("movimentacao_mina")
