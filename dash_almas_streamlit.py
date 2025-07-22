@@ -591,9 +591,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Carrega a imagem do logo
-logo_aura = r'C:\ScriptsDataminds\Painel_Hora_Hora\Icones\Logo_Aura.jpg'
-logo_mina = r'C:\ScriptsDataminds\Painel_Hora_Hora\Icones\escavadora.png'
-logo_moagem = r'C:\ScriptsDataminds\Painel_Hora_Hora\Icones\mill.png'
+pasta_atual = os.path.dirname(__file__)  # pasta onde está o script atual
+
+logo_aura = os.path.join(pasta_atual, "Icones", "Logo_Aura.jpg")
+logo_mina = os.path.join(pasta_atual, "Icones", "escavadora.png")
+logo_moagem = os.path.join(pasta_atual, "Icones", "mill.png")
 
 # Função para converter imagem para base64 e retornar também o tipo MIME correto
 def imagem_para_base64_e_tipo(caminho_imagem):
