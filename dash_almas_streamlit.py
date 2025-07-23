@@ -9,6 +9,10 @@ from PIL import Image
 from io import BytesIO
 from dotenv import load_dotenv
 from supabase import create_client, Client
+from streamlit_autorefresh import st_autorefresh
+
+# Atualiza a cada 15 minutos
+st_autorefresh(interval=1000 * 1000, key="auto_refresh")
 
 # ==============================================
 # Carregamento das tabelas
@@ -24,7 +28,6 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 # Inicializa cliente
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Função para ler os dados das tabelas
 # Função para ler os dados das tabelas
 def ler_dados_supabase(tabela: str, pagina_tamanho: int = 1000) -> pd.DataFrame:
     offset = 0
@@ -94,7 +97,7 @@ def agregar_por_hora_mina(
 # Função para Criar os graficos mina
 def gerar_grafico_colunas_mina(df_agrupado, valor_referencia=None, titulo='Título do Gráfico', yaxis_min=None, yaxis_max=None):
     df_plot = df_agrupado.copy()
-    df_plot['hora_str'] = df_plot['hora'].dt.strftime('%H:%M')
+    df_plot['hora_str'] = df_plot['hora'].dt.strftime('%H')
     df_plot['data'] = df_plot['hora'].dt.strftime('%d/%m')
 
     # Aplica cores dependendo se há ou não valor_referencia
@@ -117,7 +120,7 @@ def gerar_grafico_colunas_mina(df_agrupado, valor_referencia=None, titulo='Títu
         text=[f"{v:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".") for v in df_plot['valor']],
         textposition="inside",
         textangle=270,
-        textfont=dict(color='white'),
+        textfont=dict(color='white', size=25),
         hovertemplate="<b>Hora</b>: %{x}<br><b>Valor</b>: %{y:,}<extra></extra>",
     ))
 
@@ -128,7 +131,7 @@ def gerar_grafico_colunas_mina(df_agrupado, valor_referencia=None, titulo='Títu
             line_dash="dash",
             line_color="black",
             annotation_text=f"Meta: {valor_referencia:,.0f}".replace(",", "."),
-            annotation_position="top left",
+            annotation_position="top right",
             annotation_font_size=12,
             annotation_font_color="black",
             annotation_yshift=30
@@ -144,7 +147,7 @@ def gerar_grafico_colunas_mina(df_agrupado, valor_referencia=None, titulo='Títu
         )
         fig.add_annotation(
             x=troca_idx - 1.5,
-            y=-0.3,
+            y=1.09,
             xref='x',
             yref='paper',
             text=(dia_hoje - timedelta(days=1)).strftime('%d/%m'),
@@ -154,7 +157,7 @@ def gerar_grafico_colunas_mina(df_agrupado, valor_referencia=None, titulo='Títu
         )
         fig.add_annotation(
             x=troca_idx + 0.5,
-            y=-0.3,
+            y=1.09,
             xref='x',
             yref='paper',
             text=dia_hoje.strftime('%d/%m'),
@@ -172,8 +175,9 @@ def gerar_grafico_colunas_mina(df_agrupado, valor_referencia=None, titulo='Títu
             font=dict(size=20, family='Arial', color='black')
         ),
         xaxis=dict(
-            tickangle=-45,
-            tickfont=dict(size=12, family='Arial', color='black'),
+            tickangle=0,
+            type = 'category',
+            tickfont=dict(size=16, family='Arial', color='black'),
             showline=True,
             linecolor='black'
         ),
@@ -182,7 +186,7 @@ def gerar_grafico_colunas_mina(df_agrupado, valor_referencia=None, titulo='Títu
             range=[yaxis_min, yaxis_max] if yaxis_min is not None and yaxis_max is not None else None
         ),
         bargap=0.2,
-        margin=dict(t=40, b=70, l=0, r=0),
+        margin=dict(t=40, b=20, l=0, r=0),
         plot_bgcolor='white',
         paper_bgcolor='white',
         height=300
@@ -308,7 +312,7 @@ def agregar_por_hora_planta(
 def gerar_grafico_colunas_planta(df_agrupado, valor_referencia=None, titulo='Título do Gráfico', yaxis_min=None, yaxis_max=None):
 
     df_plot = df_agrupado.copy()
-    df_plot['hora_str'] = df_plot['hora'].dt.strftime('%H:%M')
+    df_plot['hora_str'] = df_plot['hora'].dt.strftime('%H')
     df_plot['data'] = df_plot['hora'].dt.strftime('%d/%m')
 
     # Aplica cores dependendo se há ou não valor_referencia
@@ -331,7 +335,7 @@ def gerar_grafico_colunas_planta(df_agrupado, valor_referencia=None, titulo='Tí
         text=[f"{v:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".") for v in df_plot['valor']],
         textposition="inside",
         textangle=270,
-        textfont=dict(color='white'),
+        textfont=dict(color='white', size=25),
         hovertemplate="<b>Hora</b>: %{x}<br><b>Valor</b>: %{y:,}<extra></extra>",
     ))
 
@@ -387,8 +391,9 @@ def gerar_grafico_colunas_planta(df_agrupado, valor_referencia=None, titulo='Tí
             font=dict(size=20, family='Arial', color='black')
         ),
         xaxis=dict(
-            tickangle=-45,
-            tickfont=dict(size=12, family='Arial', color='black'),
+            tickangle=0,
+            type='category',
+            tickfont=dict(size=16, family='Arial', color='black'),
             showline=True,
             linecolor='black'
         ),
@@ -397,7 +402,7 @@ def gerar_grafico_colunas_planta(df_agrupado, valor_referencia=None, titulo='Tí
             range=[yaxis_min, yaxis_max] if yaxis_min is not None and yaxis_max is not None else None
         ),
         bargap=0.2,
-        margin=dict(t=40, b=70, l=0, r=0),
+        margin=dict(t=40, b=60, l=0, r=0),
         plot_bgcolor='white',
         paper_bgcolor='white',
         height=300
@@ -527,11 +532,11 @@ def gerar_grafico_linha_planta(df_linha, titulo='Título do Gráfico', yaxis_min
         ),
         xaxis=dict(
             type="date",
-            tickformat="%H:%M",
+            tickformat="%H",
             tickmode="linear",
             dtick=3600000,  # 1 hora em milissegundos
-            tickangle=-45,
-            tickfont=dict(size=12, family='Arial', color='black'),
+            tickangle=0,
+            tickfont=dict(size=16, family='Arial', color='black'),
             showline=True,
             linecolor='black'
         ),
@@ -539,7 +544,7 @@ def gerar_grafico_linha_planta(df_linha, titulo='Título do Gráfico', yaxis_min
             visible=False,
             range=[yaxis_min, yaxis_max] if yaxis_min is not None and yaxis_max is not None else None
         ),
-        margin=dict(t=40, b=70, l=0, r=0),
+        margin=dict(t=40, b=60, l=0, r=0),
         plot_bgcolor='white',
         paper_bgcolor='white',
         height=300
@@ -633,7 +638,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # Linha 1 - Total / Minério
-col1, col2 = st.columns([0.5, 0.5], gap="small")
+col1, col2 = st.columns([0.5, 0.5], gap="medium")
 with col1:
     if not df_agg_total.empty:
         st.plotly_chart(grafico_total.update_layout(height=240), use_container_width=True)
@@ -642,7 +647,7 @@ with col2:
         st.plotly_chart(grafico_minerio.update_layout(height=240), use_container_width=True)
 
 # Linha 2 - Viagens / Estéril
-col3, col4 = st.columns([0.5, 0.5], gap="small")
+col3, col4 = st.columns([0.5, 0.5], gap="medium")
 with col3:
     if not df_agg_viagens.empty:
         st.plotly_chart(grafico_numero_viagens.update_layout(height=240), use_container_width=True)
@@ -661,7 +666,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # Linha 3 - Totalizador / Média Móvel
-col5, col6 = st.columns([0.5, 0.5], gap="small")
+col5, col6 = st.columns([0.5, 0.5], gap="medium")
 with col5:
     if not df_agg_totalizador.empty:
         st.plotly_chart(grafico_totalizador.update_layout(height=240), use_container_width=True)
