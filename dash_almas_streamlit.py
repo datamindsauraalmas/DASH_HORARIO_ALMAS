@@ -3,6 +3,7 @@ import plotly.graph_objects as go
 import streamlit as st
 import base64
 import os
+import pytz
 
 from datetime import datetime, timedelta
 from PIL import Image
@@ -55,6 +56,7 @@ df_totalizador = ler_dados_supabase("alimentacao_moagem")
 df_vazao_final = ler_dados_supabase("alimentacao_planta_media_movel")
 df_dados_planta = ler_dados_supabase("dados_planta")
 
+# Renomer nomes das colunas para melhor exibição no Tooltip dos graficos
 df_dados_planta.rename(columns={"Moinho_Justificativa do Tempo operando com taxa a menor_(txt)": "Desvio taxa Moagem"},inplace=True)
 df_dados_planta.rename(columns={"Britagem_Justificativa de NÂO atingir a massa_(txt)": "Justificativa Alimentação Britagem"},inplace=True)
 df_dados_planta.rename(columns={"Moinho_Justificativa de NÂO atingir a massa_(txt)": "Justificativa Alimentação Moagem"},inplace=True)
@@ -511,6 +513,405 @@ grafico_barra_moagem = gerar_grafico_colunas(
     colunas_tooltip=['Justificativa Alimentação Moagem','Desvio taxa Moagem']
 )
 
+# =========================================================
+# Funções para Calculos de Ritmo, Produção Acumulada e Ritmo de Produção
+# =========================================================
+
+# Função para calcular o acumulado mensal
+def acumulado_mensal(
+    df: pd.DataFrame,
+    coluna_valor: str,
+    coluna_datahora: str,
+    tipo_agregacao: str = 'sum'
+) -> float:
+    # Fuso horário local
+    fuso = pytz.timezone('America/Sao_Paulo')
+    agora = datetime.now(fuso)
+
+    # Se for dia 1, usar o mês anterior como base
+    data_base = agora - timedelta(days=1) if agora.day == 1 else agora
+    mes = data_base.month
+    ano = data_base.year
+
+    # Garantir que a coluna de data esteja em datetime com timezone correto
+    try:
+        df[coluna_datahora] = pd.to_datetime(df[coluna_datahora])
+        if df[coluna_datahora].dt.tz is None:
+            # Timestamps são tz-naive → localizar com o fuso de São Paulo
+            df[coluna_datahora] = df[coluna_datahora].dt.tz_localize(fuso)
+        else:
+            # Timestamps já têm timezone → converter para São Paulo
+            df[coluna_datahora] = df[coluna_datahora].dt.tz_convert(fuso)
+    except Exception as e:
+        raise ValueError(f"Erro ao processar a coluna '{coluna_datahora}' como datetime: {e}")
+
+    # Filtrar os dados para o mês e ano desejado
+    df_filtrado = df[
+        (df[coluna_datahora].dt.month == mes) &
+        (df[coluna_datahora].dt.year == ano)
+    ]
+
+    # Agregação
+    if tipo_agregacao == 'sum':
+        return df_filtrado[coluna_valor].sum()
+    elif tipo_agregacao == 'mean':
+        return df_filtrado[coluna_valor].mean()
+    elif tipo_agregacao == 'max':
+        return df_filtrado[coluna_valor].max()
+    elif tipo_agregacao == 'min':
+        return df_filtrado[coluna_valor].min()
+    elif tipo_agregacao == 'count':
+        return df_filtrado[coluna_valor].count()
+    else:
+        raise ValueError(f"Tipo de agregação '{tipo_agregacao}' não suportado.")
+    
+# Função para calcular o valor do dia anterior
+def acumulado_dia_anterior(
+    df: pd.DataFrame,
+    coluna_valor: str,
+    coluna_datahora: str,
+    tipo_agregacao: str = 'sum'
+) -> float:
+    agora = datetime.now(pytz.timezone('America/Sao_Paulo'))
+    ontem = (agora - timedelta(days=1)).date()
+
+    df[coluna_datahora] = pd.to_datetime(df[coluna_datahora]).dt.tz_convert('America/Sao_Paulo')
+    df['data'] = df[coluna_datahora].dt.date
+    df_filtrado = df[df['data'] == ontem]
+
+    if tipo_agregacao == 'sum':
+        return df_filtrado[coluna_valor].sum()
+    elif tipo_agregacao == 'mean':
+        return df_filtrado[coluna_valor].mean()
+    elif tipo_agregacao == 'max':
+        return df_filtrado[coluna_valor].max()
+    elif tipo_agregacao == 'min':
+        return df_filtrado[coluna_valor].min()
+    elif tipo_agregacao == 'count':
+        return df_filtrado[coluna_valor].count()
+    else:
+        raise ValueError(f"Tipo de agregação '{tipo_agregacao}' não suportado.")
+    
+# Função para calcular o acumulado do dia atual
+def acumulado_dia_atual(
+    df: pd.DataFrame,
+    coluna_valor: str,
+    coluna_datahora: str,
+    tipo_agregacao: str = 'sum'
+) -> float:
+    agora = datetime.now(pytz.timezone('America/Sao_Paulo'))
+    hoje = agora.date()
+
+    df[coluna_datahora] = pd.to_datetime(df[coluna_datahora]).dt.tz_convert('America/Sao_Paulo')
+    df['data'] = df[coluna_datahora].dt.date
+    df_filtrado = df[df['data'] == hoje]
+
+    if tipo_agregacao == 'sum':
+        return df_filtrado[coluna_valor].sum()
+    elif tipo_agregacao == 'mean':
+        return df_filtrado[coluna_valor].mean()
+    elif tipo_agregacao == 'max':
+        return df_filtrado[coluna_valor].max()
+    elif tipo_agregacao == 'min':
+        return df_filtrado[coluna_valor].min()
+    elif tipo_agregacao == 'count':
+        return df_filtrado[coluna_valor].count()
+    else:
+        raise ValueError(f"Tipo de agregação '{tipo_agregacao}' não suportado.")
+
+# Função para calcular o ritmo de produção
+def ritmo_mensal(
+    df: pd.DataFrame,
+    coluna_valor: str,
+    coluna_datahora: str,
+    tipo_agregacao: str = 'sum'
+) -> float:
+    fuso = pytz.timezone('America/Sao_Paulo')
+    agora = datetime.now(fuso)
+
+    if agora.day == 1:
+        data_base = agora - timedelta(days=1)
+    else:
+        data_base = agora
+
+    mes = data_base.month
+    ano = data_base.year
+
+    # Corrigir datetime com fuso horário (atenção aqui!)
+    df[coluna_datahora] = pd.to_datetime(df[coluna_datahora])
+    if df[coluna_datahora].dt.tz is None:
+        df[coluna_datahora] = df[coluna_datahora].dt.tz_localize(fuso)
+    else:
+        df[coluna_datahora] = df[coluna_datahora].dt.tz_convert(fuso)
+
+    df_mes = df[
+        (df[coluna_datahora].dt.month == mes) &
+        (df[coluna_datahora].dt.year == ano)
+    ]
+
+    if df_mes.empty:
+        return 0.0
+
+    if tipo_agregacao == 'sum':
+        acumulado = df_mes[coluna_valor].sum()
+    elif tipo_agregacao == 'mean':
+        acumulado = df_mes[coluna_valor].mean()
+    elif tipo_agregacao == 'max':
+        acumulado = df_mes[coluna_valor].max()
+    elif tipo_agregacao == 'min':
+        acumulado = df_mes[coluna_valor].min()
+    elif tipo_agregacao == 'count':
+        acumulado = df_mes[coluna_valor].count()
+    else:
+        raise ValueError(f"Tipo de agregação '{tipo_agregacao}' não suportado.")
+
+    data_min = df_mes[coluna_datahora].min()
+    agora = datetime.now(fuso).replace(minute=0, second=0, microsecond=0)
+    data_max = pd.Timestamp(agora)
+
+    horas_decorridas = int((data_max - data_min).total_seconds() // 3600)
+
+    inicio_mes = pd.Timestamp(datetime(ano, mes, 1), tz=fuso)
+    inicio_mes_proximo = (inicio_mes + pd.offsets.MonthBegin(1))
+    fim_mes = inicio_mes_proximo - timedelta(seconds=1)
+    total_horas_mes = int((fim_mes - inicio_mes).total_seconds() // 3600) + 1
+
+    if total_horas_mes - horas_decorridas == 0:
+        return acumulado
+
+    ritmo = ((acumulado / horas_decorridas) * (total_horas_mes - horas_decorridas)) + acumulado
+    return ritmo
+
+# Função para calcular o ritmo do dia atual
+def ritmo_dia_atual(
+    df: pd.DataFrame,
+    coluna_valor: str,
+    coluna_datahora: str,
+    tipo_agregacao: str = 'sum'
+) -> float:
+    fuso = pytz.timezone('America/Sao_Paulo')
+    agora = datetime.now(fuso).replace(minute=0, second=0, microsecond=0)
+    hoje = agora.date()
+
+    # Padroniza datetime com fuso horário
+    df[coluna_datahora] = pd.to_datetime(df[coluna_datahora])
+    if df[coluna_datahora].dt.tz is None:
+        df[coluna_datahora] = df[coluna_datahora].dt.tz_localize(fuso)
+    else:
+        df[coluna_datahora] = df[coluna_datahora].dt.tz_convert(fuso)
+
+    # Filtra apenas registros do dia atual
+    df_dia = df[df[coluna_datahora].dt.date == hoje]
+
+    if df_dia.empty:
+        return 0.0
+
+    # Cálculo do acumulado conforme tipo de agregação
+    if tipo_agregacao == 'sum':
+        acumulado = df_dia[coluna_valor].sum()
+    elif tipo_agregacao == 'mean':
+        acumulado = df_dia[coluna_valor].mean()
+    elif tipo_agregacao == 'max':
+        acumulado = df_dia[coluna_valor].max()
+    elif tipo_agregacao == 'min':
+        acumulado = df_dia[coluna_valor].min()
+    elif tipo_agregacao == 'count':
+        acumulado = df_dia[coluna_valor].count()
+    else:
+        raise ValueError(f"Tipo de agregação '{tipo_agregacao}' não suportado.")
+
+    # Considera 00:00 do dia atual como início
+    inicio_dia = datetime.combine(hoje, datetime.min.time()).replace(tzinfo=fuso)
+    fim_dia = datetime.combine(hoje, datetime.max.time()).replace(tzinfo=fuso)
+
+    horas_decorridas = int((agora - inicio_dia).total_seconds() // 3600)
+    total_horas_dia = int((fim_dia - inicio_dia).total_seconds() // 3600)
+
+    if horas_decorridas == 0 or total_horas_dia - horas_decorridas == 0:
+        return acumulado
+
+    ritmo = ((acumulado / horas_decorridas) * (total_horas_dia - horas_decorridas)) + acumulado
+    return ritmo
+
+# =============================================
+# Chamada das funções de cálculo
+# =============================================
+
+# Chamada das função de Acumulado do mês
+# =============================================
+
+# 1 - Acumulado Movimentação mina do mês
+valor_mensal_movimentacao_mina = acumulado_mensal(
+    df=df_transporte_filtrado,
+    coluna_valor='calculated_mass',
+    coluna_datahora='hora_completa',
+    tipo_agregacao='sum'
+)
+
+# 2 - Acumulado Viagens mina do mês
+valor_mensal_viagens = acumulado_mensal(
+    df=df_transporte_filtrado,
+    coluna_valor='calculated_mass',
+    coluna_datahora='hora_completa',
+    tipo_agregacao='count'
+)
+
+# 3 - Acumulado Britagem do mês
+valor_mensal_britagem = acumulado_mensal(
+    df=df_dados_planta,
+    coluna_valor='Britagem_Massa Produzida Britagem_(t)',
+    coluna_datahora='Timestamp',
+    tipo_agregacao='sum'
+)
+
+# 4 - Acumulado Moagem do mês
+valor_mensal_moagem = acumulado_mensal(
+    df=df_dados_planta,
+    coluna_valor='Moinho_Massa Alimentada Moagem_(t)',
+    coluna_datahora='Timestamp',
+    tipo_agregacao='sum'
+)
+
+# Chamada das função de Ritmo do mês
+# ===================================
+
+# 1 - Ritmo Britagem do mês
+ritmo_movimentacao = ritmo_mensal(
+    df=df_transporte_filtrado,
+    coluna_valor='calculated_mass',
+    coluna_datahora='hora_completa',
+    tipo_agregacao='sum'
+)
+
+# 2 - Ritmo Britagem do mês
+ritmo_viagens = ritmo_mensal(
+    df=df_transporte_filtrado,
+    coluna_valor='calculated_mass',
+    coluna_datahora='hora_completa',
+    tipo_agregacao='count'
+)
+
+# 3 - Ritmo Britagem do mês
+ritmo_britagem = ritmo_mensal(
+    df=df_dados_planta,
+    coluna_valor='Britagem_Massa Produzida Britagem_(t)',
+    coluna_datahora='Timestamp',
+    tipo_agregacao='sum'
+)
+
+# 4 - Ritmo Moagem do mês
+ritmo_moagem = ritmo_mensal(
+    df=df_dados_planta,
+    coluna_valor='Moinho_Massa Alimentada Moagem_(t)',
+    coluna_datahora='Timestamp',
+    tipo_agregacao='sum'
+)
+
+# Chamada das função dia anterior
+# ================================
+
+# 1 - Dia anterior movimentação de mina
+valor_ontem_movimentacao = acumulado_dia_anterior(
+    df=df_transporte_filtrado,
+    coluna_valor='calculated_mass',
+    coluna_datahora='hora_completa',
+    tipo_agregacao='sum'
+)
+
+# 2 - Dia anterior movimentação de mina
+valor_ontem_viagens= acumulado_dia_anterior(
+    df=df_transporte_filtrado,
+    coluna_valor='calculated_mass',
+    coluna_datahora='hora_completa',
+    tipo_agregacao='count'
+)
+
+# 3 - Dia anterior Britagem
+valor_ontem_britagem = acumulado_dia_anterior(
+    df=df_dados_planta,
+    coluna_valor='Britagem_Massa Produzida Britagem_(t)',
+    coluna_datahora='Timestamp',
+    tipo_agregacao='sum'
+)
+
+# 4 - Dia anterior Britagem
+valor_ontem_moagem = acumulado_dia_anterior(
+    df=df_dados_planta,
+    coluna_valor='Moinho_Massa Alimentada Moagem_(t)',
+    coluna_datahora='Timestamp',
+    tipo_agregacao='sum'
+)
+
+# Chamada das função soma do dia Atual
+# =====================================
+
+# 1 - Dia atual movimentação de mina
+valor_hoje_movimentacao = acumulado_dia_atual(
+    df=df_transporte_filtrado,
+    coluna_valor='calculated_mass',
+    coluna_datahora='hora_completa',
+    tipo_agregacao='sum'
+)
+
+# 2 - Dia atual movimentação de mina
+valor_hoje_viagens= acumulado_dia_atual(
+    df=df_transporte_filtrado,
+    coluna_valor='calculated_mass',
+    coluna_datahora='hora_completa',
+    tipo_agregacao='count'
+)
+
+# 3 - Dia atual Britagem
+valor_hoje_britagem = acumulado_dia_atual(
+    df=df_dados_planta,
+    coluna_valor='Britagem_Massa Produzida Britagem_(t)',
+    coluna_datahora='Timestamp',
+    tipo_agregacao='sum'
+)
+
+# 4 - Dia atual Britagem
+valor_hoje_moagem = acumulado_dia_atual(
+    df=df_dados_planta,
+    coluna_valor='Moinho_Massa Alimentada Moagem_(t)',
+    coluna_datahora='Timestamp',
+    tipo_agregacao='sum'
+)
+
+# Chamada das funções de Ritmo do dia atual
+# ==========================================
+
+# 1 - Ritmo Britagem do dia
+ritmo_movimentacao_dia = ritmo_dia_atual(
+    df=df_transporte_filtrado,
+    coluna_valor='calculated_mass',
+    coluna_datahora='hora_completa',
+    tipo_agregacao='sum'
+)
+
+# 2 - Ritmo Britagem do dia
+ritmo_viagens_dia = ritmo_dia_atual(
+    df=df_transporte_filtrado,
+    coluna_valor='calculated_mass',
+    coluna_datahora='hora_completa',
+    tipo_agregacao='count'
+)
+
+# 3 - Ritmo Britagem do dia
+ritmo_britagem_dia = ritmo_dia_atual(
+    df=df_dados_planta,
+    coluna_valor='Britagem_Massa Produzida Britagem_(t)',
+    coluna_datahora='Timestamp',
+    tipo_agregacao='sum'
+)
+
+# 4 - Ritmo Moagem do dia
+ritmo_moagem_dia = ritmo_dia_atual(
+    df=df_dados_planta,
+    coluna_valor='Moinho_Massa Alimentada Moagem_(t)',
+    coluna_datahora='Timestamp',
+    tipo_agregacao='sum'
+)
+
 # =============================================
 # Dashboard em Streamlit - Desenvolvimento
 # =============================================
@@ -542,12 +943,17 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ========== Carregamento de logos ==========
+# Carregamento dos icones
+#=========================
+
+#caminhos das imagens
 pasta_atual = os.path.dirname(__file__)
 logo_aura = os.path.join(pasta_atual, "Icones", "Logo_Aura.jpg")
 logo_mina = os.path.join(pasta_atual, "Icones", "caminhao.png")
 logo_moagem = os.path.join(pasta_atual, "Icones", "mill.png")
+logo_kpi = os.path.join(pasta_atual, "Icones", "kpi2.png")
 
+# Função para converter imagem em base64 e obter o tipo MIME
 def imagem_para_base64_e_tipo(caminho_imagem):
     imagem = Image.open(caminho_imagem)
     buffer = BytesIO()
@@ -567,6 +973,48 @@ def imagem_para_base64_e_tipo(caminho_imagem):
 base64_esquerda, tipo_esquerda = imagem_para_base64_e_tipo(logo_mina)
 base64_esquerda2, tipo_esquerda2 = imagem_para_base64_e_tipo(logo_moagem)
 base64_direita, tipo_direita = imagem_para_base64_e_tipo(logo_aura)
+base64_kpi, tipo_kpi = imagem_para_base64_e_tipo(logo_kpi)
+
+# Funções para Exibição de KPIs Customizados
+#============================================
+
+# Função para exibir KPIs customizados
+def exibir_kpis_customizados(
+    valores: dict,
+    imagem_base64: str = None,
+    imagem_tipo: str = None,
+    cor_valor: str = "#2D3D70",
+    cor_label: str = "#555",
+    fonte_valor: str = "22px",
+    fonte_label: str = "16px",
+    alinhamento: str = "left",
+    altura_imagem: str = "32px",
+    margin_top: str = "0px",
+    margin_bottom: str = "10px"
+):
+    num_kpis = len(valores)
+    colunas = st.columns(num_kpis)
+
+    for i, (label, valor) in enumerate(valores.items()):
+        with colunas[i]:
+            if imagem_base64 and imagem_tipo:
+                html = f"""
+                    <div style="display: flex; align-items: center; justify-content: {alinhamento}; margin-top: {margin_top}; margin-bottom: {margin_bottom}; gap: 10px;">
+                        <img src="data:{imagem_tipo};base64,{imagem_base64}" style="height: {altura_imagem};" />
+                        <div style="line-height: 1;">
+                            <span style="font-size:{fonte_label}; color:{cor_label};">{label}</span><br>
+                            <b style="font-size:{fonte_valor}; color:{cor_valor};">{valor:,.0f}</b>
+                        </div>
+                    </div>
+                """
+            else:
+                html = f"""
+                    <div style="text-align:{alinhamento}; margin-top: {margin_top}; margin-bottom: {margin_bottom};">
+                        <span style="font-size:{fonte_label}; color:{cor_label};">{label}</span><br>
+                        <b style="font-size:{fonte_valor}; color:{cor_valor};">{valor:,.0f}</b>
+                    </div>
+                """
+            st.markdown(html, unsafe_allow_html=True)
 
 # ==================================================
 # Renderização do Dashboard em Tela Única (Full HD)
@@ -575,40 +1023,129 @@ base64_direita, tipo_direita = imagem_para_base64_e_tipo(logo_aura)
 # Cabeçalho Mina
 st.markdown(f"""
     <div style="display: flex; justify-content: space-between; align-items: center;
-        background-color: #2D3D70; padding: 0px 30px; border-radius: 8px; margin-top: -10px; margin-bottom: 5px;">
+        background-color: #2D3D70; padding: 0px 30px; border-radius: 8px; margin-top: 0.2px; margin-bottom: 0.2px;">
         <img src="data:{tipo_esquerda};base64,{base64_esquerda}" style="height: 45px;">
         <h1 style="color: white; font-size: 28px; margin: 0;">Performance Mina Paiol - Aura Almas</h1>
         <img src="data:{tipo_direita};base64,{base64_direita}" style="height: 40px;">
     </div>
 """, unsafe_allow_html=True)
 
-# Linha 1 - Total / Minério
+# Criação do Layout de cada linha
+#=================================
+
+# Linha 1 - Movimentação Total / Numero de Viagens
 col1, col2 = st.columns([0.5, 0.5], gap="large")
 with col1:
+    valores_kpis = {
+        "Acumulado": valor_mensal_viagens,
+        "Ritmo Mês": ritmo_viagens,
+        "Ontem": valor_ontem_viagens,
+        "Hoje": valor_hoje_viagens,
+        "Ritmo Dia": ritmo_viagens_dia,
+        #"Meta dia": 710
+    }
+
+    exibir_kpis_customizados(
+        valores=valores_kpis,
+        imagem_base64=base64_kpi,
+        imagem_tipo=tipo_kpi,
+        cor_valor="#2D3D70",
+        cor_label="#444",
+        fonte_valor="22px",
+        fonte_label="14px",
+        alinhamento="left",
+        altura_imagem="26px",
+        margin_top="0px",
+        margin_bottom="10px"
+    )
     if not df_agg_viagens.empty:
         st.plotly_chart(grafico_numero_viagens.update_layout(height=300), use_container_width=True)
+
 with col2:
+    valores_kpis = {
+        "Acumulado": valor_mensal_movimentacao_mina,
+        "Ritmo Mês": ritmo_movimentacao,
+        "Ontem": valor_ontem_movimentacao,
+        "Hoje": valor_hoje_movimentacao,
+        "Ritmo Dia": ritmo_movimentacao_dia,
+        #"Meta dia": 71000
+    }
+
+    exibir_kpis_customizados(
+        valores=valores_kpis,
+        imagem_base64=base64_kpi,
+        imagem_tipo=tipo_kpi,
+        cor_valor="#2D3D70",
+        cor_label="#444",
+        fonte_valor="22px",
+        fonte_label="14px",
+        alinhamento="left",
+        altura_imagem="26px",
+        margin_top="0px",
+        margin_bottom="10px"
+    )
     if not df_agg_viagens.empty:
         st.plotly_chart(grafico_movimentacao_litogia.update_layout(height=300), use_container_width=True)
-
-# Linha 2 - Viagens / Estéril
-col3, col4 = st.columns([0.5, 0.5], gap="large")
 
 # Cabeçalho Moagem
 st.markdown(f"""
     <div style="display: flex; justify-content: space-between; align-items: center;
-        background-color: #2D3D70; padding: 0px 30px; border-radius: 8px; margin-top: 100px; margin-bottom: 5px;">
+        background-color: #2D3D70; padding: 0px 30px; border-radius: 8px; margin-top: 40px; margin-bottom: 5px;">
         <img src="data:{tipo_esquerda2};base64,{base64_esquerda2}" style="height: 40px;">
         <h1 style="color: white; font-size: 28px; margin: 0;">Performance Planta - Aura Almas</h1>
         <img src="data:{tipo_direita};base64,{base64_direita}" style="height: 40px;">
     </div>
 """, unsafe_allow_html=True)
 
-# Linha 3 - Totalizador / Média Móvel
-col5, col6 = st.columns([0.5, 0.5], gap="large")
-with col5:
+# Linha 2 - Alimentação Britagem / Alimentação Moagem
+col3, col4 = st.columns([0.5, 0.5], gap="large")
+with col3:
+    valores_kpis = {
+        "Acumulado": valor_mensal_britagem,
+        "Ritmo Mês": ritmo_britagem,
+        "Ontem": valor_ontem_britagem,
+        "Hoje": valor_hoje_britagem,
+        "Ritmo Dia": ritmo_britagem_dia,
+        #"Meta dia": 71000
+    }
+
+    exibir_kpis_customizados(
+        valores=valores_kpis,
+        imagem_base64=base64_kpi,
+        imagem_tipo=tipo_kpi,
+        cor_valor="#2D3D70",
+        cor_label="#444",
+        fonte_valor="22px",
+        fonte_label="14px",
+        alinhamento="left",
+        altura_imagem="26px",
+        margin_top="0px",
+        margin_bottom="10px"
+    )
     if not df_agg_britagem.empty:
         st.plotly_chart(grafico_barra_britagem.update_layout(height=300), use_container_width=True)
-with col6:
+with col4:
+    valores_kpis = {
+        "Acumulado": valor_mensal_moagem,
+        "Ritmo Mês": ritmo_moagem,
+        "Ontem": valor_ontem_moagem,
+        "Hoje": valor_hoje_moagem,
+        "Ritmo Dia": ritmo_moagem_dia,
+        #"Meta dia": 71000
+    }
+
+    exibir_kpis_customizados(
+        valores=valores_kpis,
+        imagem_base64=base64_kpi,
+        imagem_tipo=tipo_kpi,
+        cor_valor="#2D3D70",
+        cor_label="#444",
+        fonte_valor="22px",
+        fonte_label="14px",
+        alinhamento="left",
+        altura_imagem="26px",
+        margin_top="0px",
+        margin_bottom="10px"
+    )
     if not df_agg_moagem.empty:
         st.plotly_chart(grafico_barra_moagem.update_layout(height=300), use_container_width=True)
