@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
 
-# Atualiza a cada 15 minutos
+# Atualiza a cada 5 minutos
 st_autorefresh(interval=500 * 1000, key="auto_refresh")
 
 # ==============================================
@@ -55,40 +55,48 @@ df_totalizador = ler_dados_supabase("alimentacao_moagem")
 df_vazao_final = ler_dados_supabase("alimentacao_planta_media_movel")
 df_dados_planta = ler_dados_supabase("dados_planta")
 
+df_dados_planta.rename(columns={"Moinho_Justificativa do Tempo operando com taxa a menor_(txt)": "Desvio taxa Moagem"},inplace=True)
+df_dados_planta.rename(columns={"Britagem_Justificativa de NÂO atingir a massa_(txt)": "Justificativa Alimentação Britagem"},inplace=True)
+df_dados_planta.rename(columns={"Moinho_Justificativa de NÂO atingir a massa_(txt)": "Justificativa Alimentação Moagem"},inplace=True)
+
 # ==============================================
 # Funções de agregação
 # ==============================================
+
+#Parametros para filtrar os dados dos graficos com base nas ultimas 24 horas
+parametro_agora = datetime.now().replace(minute=0, second=0, microsecond=0)
+parametro_inicio = parametro_agora - timedelta(hours=28) # Usar 24 para teste local e 28 para o github (fuso horario)
 
 def agregar_por_hora(
     df,
     valor_coluna,
     coluna_hora='hora_completa',
     grupo_material=None,
-    tipo_agregacao='sum'
+    tipo_agregacao='sum',
+    colunas_texto=None
 ):
-    agora = datetime.now().replace(minute=0, second=0, microsecond=0)
-    inicio = agora - timedelta(hours=28)
+    agora = parametro_agora
+    inicio = parametro_inicio
 
     df_filtrado = df.copy()
-
-    # Garante que a coluna passada como 'coluna_hora' está no formato datetime e arredondada para hora cheia
     df_filtrado[coluna_hora] = pd.to_datetime(df_filtrado[coluna_hora], errors='coerce').dt.floor('h')
+    df_filtrado = df_filtrado[(df_filtrado[coluna_hora] >= inicio) & (df_filtrado[coluna_hora] < agora)]
 
-    # Filtra o intervalo de tempo: últimas 24h, excluindo a hora atual
-    df_filtrado = df_filtrado[
-        (df_filtrado[coluna_hora] >= inicio) & 
-        (df_filtrado[coluna_hora] < agora)
-    ]
-
-    # Aplica o filtro de grupo de material, se fornecido
     if grupo_material is not None:
         df_filtrado = df_filtrado[df_filtrado['material_group'] == grupo_material]
 
-    # Realiza a agregação por hora usando a coluna especificada
+    # Colunas para manter além da hora e valor
+    colunas_agregadas = [coluna_hora, valor_coluna]
+    if colunas_texto:
+        colunas_agregadas += colunas_texto
+
+    df_filtrado = df_filtrado[colunas_agregadas]
+
+    # Realiza agregação
     df_agrupado = (
         df_filtrado
-        .groupby(coluna_hora)[valor_coluna]
-        .agg(tipo_agregacao)
+        .groupby(coluna_hora)
+        .agg({valor_coluna: tipo_agregacao, **{col: 'first' for col in (colunas_texto or [])}})
         .reset_index()
         .rename(columns={coluna_hora: 'hora', valor_coluna: 'valor'})
     )
@@ -103,8 +111,8 @@ def agregar_por_hora_empilhado(
     coluna_empilhamento='material',
     tipo_agregacao='sum'
 ):
-    agora = datetime.now().replace(minute=0, second=0, microsecond=0)
-    inicio = agora - timedelta(hours=28)
+    agora = parametro_agora
+    inicio = parametro_inicio
 
     df_filtrado = df.copy()
 
@@ -139,19 +147,26 @@ def gerar_grafico_colunas(
     titulo='Título do Gráfico',
     yaxis_min=None,
     yaxis_max=None,
-    tooltip_template=None
+    colunas_tooltip=None
 ):
     df_plot = df_agrupado.copy()
     df_plot['hora_str'] = df_plot['hora'].dt.strftime('%H')
     df_plot['data'] = df_plot['hora'].dt.strftime('%d/%m')
 
-    # Tooltip padrão atualizado
-    if tooltip_template is None:
-        tooltip_template = (
-            "<b>Data</b>: %{customdata[0]}<br>"
-            "<b>Hora</b>: %{x}<br>"
-            "<b>Valor</b>: %{y:,}<extra></extra>"
-        )
+    # Geração do campo customdata com base nas colunas fornecidas
+    colunas_tooltip = colunas_tooltip or []
+    customdata = []
+
+    for _, row in df_plot.iterrows():
+        linha_tooltip = []
+        for col in colunas_tooltip:
+            valor = row.get(col)
+            if pd.notnull(valor):
+                linha_tooltip.append(f"<b>{col}</b>: {valor}")
+        linha_tooltip.insert(0, f"<b>Data</b>: {row['data']}")  # sempre adiciona a data
+        linha_tooltip.append(f"<b>Hora</b>: {row['hora_str']}")
+        linha_tooltip.append(f"<b>Valor</b>: {row['valor']:,.0f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        customdata.append("<br>".join(linha_tooltip))
 
     # Aplica cores dependendo se há ou não valor_referencia
     if valor_referencia is not None:
@@ -165,7 +180,7 @@ def gerar_grafico_colunas(
 
     fig = go.Figure()
 
-    # Barras com customdata para tooltip
+    # Barras com texto personalizado no hover
     fig.add_trace(go.Bar(
         x=df_plot['hora_str'],
         y=df_plot['valor'],
@@ -174,8 +189,8 @@ def gerar_grafico_colunas(
         textposition="inside",
         textangle=270,
         textfont=dict(color='white', size=25),
-        hovertemplate=tooltip_template,
-        customdata=df_plot[['data']].values,
+        hovertemplate="%{customdata}<extra></extra>",
+        customdata=customdata
     ))
 
     # Linha da meta (opcional)
@@ -264,11 +279,21 @@ def gerar_grafico_empilhado(
     df_plot = df_plot.sort_values(['hora', 'categoria'])
 
     # Cria a string de hora (somente HH) para exibição no eixo x
-    df_plot['hora_str'] = df_plot['hora'].dt.strftime('%H')
+    #df_plot['hora_str'] = df_plot['hora'].dt.strftime('%H')
 
     # Garante ordenação com base em data/hora real
-    categorias_x = df_plot.drop_duplicates('hora').sort_values('hora')['hora_str'].tolist()
+    #categorias_x = df_plot.drop_duplicates('hora').sort_values('hora')['hora_str'].tolist()
+    #df_plot['hora_str'] = pd.Categorical(df_plot['hora_str'], categories=categorias_x, ordered=True)
+
+    # Cria a string de hora (somente HH) para exibição no eixo x
+    df_plot['hora_str'] = df_plot['hora'].dt.strftime('%H')
+
+# Remove duplicatas e mantém ordem cronológica
+    categorias_x = list(dict.fromkeys(df_plot.sort_values('hora')['hora_str'].tolist()))
+
+# Converte para categórico com categorias ordenadas
     df_plot['hora_str'] = pd.Categorical(df_plot['hora_str'], categories=categorias_x, ordered=True)
+
 
     # Detecta a hora de troca de dia
     dia_hoje = datetime.now().date()
@@ -377,13 +402,13 @@ def gerar_grafico_empilhado(
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=0.9 + (legenda_yshift / 100),
+            y=0.85 + (legenda_yshift / 100),
             xanchor="center",
             x=0.8,
             font=dict(size=14)
         ),
         bargap=0.2,
-        margin=dict(t=40, b=20, l=0, r=0),
+        margin=dict(t=30, b=20, l=0, r=0),
         plot_bgcolor='white',
         paper_bgcolor='white',
         height=300
@@ -455,7 +480,8 @@ df_agg_britagem = agregar_por_hora(
     df=df_base_planta,
     coluna_hora='Timestamp',
     valor_coluna='Britagem_Massa Produzida Britagem_(t)',
-    tipo_agregacao='sum'
+    tipo_agregacao='sum',
+    colunas_texto=['Justificativa Alimentação Britagem']
 )
 
 grafico_barra_britagem = gerar_grafico_colunas(
@@ -463,7 +489,8 @@ grafico_barra_britagem = gerar_grafico_colunas(
     valor_referencia=310,  
     titulo='Alimentação Britagem (t)',
     yaxis_min=0,
-    yaxis_max=420
+    yaxis_max=420,
+    colunas_tooltip=['Justificativa Alimentação Britagem']
 )
 
 # Grafico 2 - Alimentação Moagem
@@ -471,7 +498,8 @@ df_agg_moagem = agregar_por_hora(
     df=df_base_planta,
     coluna_hora='Timestamp',
     valor_coluna='Moinho_Massa Alimentada Moagem_(t)',
-    tipo_agregacao='sum'
+    tipo_agregacao='sum',
+    colunas_texto=['Justificativa Alimentação Moagem','Desvio taxa Moagem']
 )
 
 grafico_barra_moagem = gerar_grafico_colunas(
@@ -479,7 +507,8 @@ grafico_barra_moagem = gerar_grafico_colunas(
     valor_referencia=250,  
     titulo='Alimentação Moagem (t)',
     yaxis_min=0,
-    yaxis_max=420
+    yaxis_max=420,
+    colunas_tooltip=['Justificativa Alimentação Moagem','Desvio taxa Moagem']
 )
 
 # =============================================
@@ -499,7 +528,7 @@ st.markdown("""
             margin: auto;
         }
         header, .main {
-            padding-top: 0.5rem !important;
+            padding-top: 0rem !important;
         }
         h1, h2, h3 {
             margin-top: -10px !important;
@@ -539,9 +568,9 @@ base64_esquerda, tipo_esquerda = imagem_para_base64_e_tipo(logo_mina)
 base64_esquerda2, tipo_esquerda2 = imagem_para_base64_e_tipo(logo_moagem)
 base64_direita, tipo_direita = imagem_para_base64_e_tipo(logo_aura)
 
-# =============================================
+# ==================================================
 # Renderização do Dashboard em Tela Única (Full HD)
-# =============================================
+# ==================================================
 
 # Cabeçalho Mina
 st.markdown(f"""
