@@ -64,7 +64,7 @@ df_dados_planta.rename(columns={"Moinho_Justificativa de NÂO atingir a massa_(t
 # ==============================================
 
 #Parametros para filtrar os dados dos graficos com base nas ultimas 24 horas
-parametro_agora = datetime.now().replace(minute=0, second=0, microsecond=0)-timedelta(hours=4)
+parametro_agora = datetime.now().replace(minute=0, second=0, microsecond=0)-timedelta(hours=3)
 parametro_inicio = parametro_agora - timedelta(hours=24)
 
 def agregar_por_hora(
