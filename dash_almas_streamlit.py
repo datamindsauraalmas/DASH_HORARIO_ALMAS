@@ -67,7 +67,7 @@ def agregar_por_hora(
     tipo_agregacao='sum'
 ):
     agora = datetime.now().replace(minute=0, second=0, microsecond=0)
-    inicio = agora - timedelta(hours=24)
+    inicio = agora - timedelta(hours=28)
 
     df_filtrado = df.copy()
 
@@ -104,7 +104,7 @@ def agregar_por_hora_empilhado(
     tipo_agregacao='sum'
 ):
     agora = datetime.now().replace(minute=0, second=0, microsecond=0)
-    inicio = agora - timedelta(hours=24)
+    inicio = agora - timedelta(hours=28)
 
     df_filtrado = df.copy()
 
