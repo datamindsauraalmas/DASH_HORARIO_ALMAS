@@ -53,7 +53,6 @@ def ler_dados_supabase(tabela: str, pagina_tamanho: int = 1000) -> pd.DataFrame:
 # Lê dados da tabela 'movimentacao_mina'
 df_transporte_filtrado = ler_dados_supabase("movimentacao_mina")
 df_totalizador = ler_dados_supabase("alimentacao_moagem")
-df_vazao_final = ler_dados_supabase("alimentacao_planta_media_movel")
 df_dados_planta = ler_dados_supabase("dados_planta")
     
 # Renomer nomes das colunas para melhor exibição no Tooltip dos graficos
