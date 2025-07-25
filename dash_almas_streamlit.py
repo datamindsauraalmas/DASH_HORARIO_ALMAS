@@ -55,11 +55,13 @@ df_transporte_filtrado = ler_dados_supabase("movimentacao_mina")
 df_totalizador = ler_dados_supabase("alimentacao_moagem")
 df_vazao_final = ler_dados_supabase("alimentacao_planta_media_movel")
 df_dados_planta = ler_dados_supabase("dados_planta")
-
+    
 # Renomer nomes das colunas para melhor exibição no Tooltip dos graficos
-df_dados_planta.rename(columns={"Moinho_Justificativa do Tempo operando com taxa a menor_(txt)": "Desvio taxa Moagem"},inplace=True)
-df_dados_planta.rename(columns={"Britagem_Justificativa de NÂO atingir a massa_(txt)": "Justificativa Alimentação Britagem"},inplace=True)
-df_dados_planta.rename(columns={"Moinho_Justificativa de NÂO atingir a massa_(txt)": "Justificativa Alimentação Moagem"},inplace=True)
+df_dados_planta.rename(columns={
+    "Moinho_Justificativa do Tempo operando com taxa a menor_(txt)": "Desvio taxa Moagem",
+    "Britagem_Justificativa de NÂO atingir a massa_(txt)": "Justificativa Alimentação Britagem",
+    "Moinho_Justificativa de NÂO atingir a massa_(txt)": "Justificativa Alimentação Moagem"
+}, inplace=True)
 
 # ==============================================
 # Funções de agregação
@@ -987,34 +989,43 @@ def exibir_kpis_customizados(
     cor_label: str = "#555",
     fonte_valor: str = "22px",
     fonte_label: str = "16px",
-    alinhamento: str = "left",
-    altura_imagem: str = "32px",
+    altura_imagem: str = "64px",
+    largura_imagem: str = "64px",
     margin_top: str = "0px",
-    margin_bottom: str = "10px"
+    margin_bottom: str = "10px",
+    padding_top_imagem: str = "0px"  # << novo parâmetro para ajustar posição vertical da imagem
 ):
-    num_kpis = len(valores)
-    colunas = st.columns(num_kpis)
+    # Duas colunas principais: imagem (esquerda) + kpis (direita)
+    col_img, col_kpis = st.columns([1, 6])  # Ajuste a proporção se necessário
 
-    for i, (label, valor) in enumerate(valores.items()):
-        with colunas[i]:
-            if imagem_base64 and imagem_tipo:
+    # Bloco da imagem única
+    if imagem_base64 and imagem_tipo:
+        with col_img:
+            st.markdown(
+                f"""
+                <div style="display: flex; justify-content: center; padding-top: {padding_top_imagem}; margin-top: {margin_top}; margin-bottom: {margin_bottom};">
+                    <img src="data:{imagem_tipo};base64,{imagem_base64}"
+                         style="height: {altura_imagem}; width: {largura_imagem}; object-fit: contain;" />
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+    # Bloco dos KPIs
+    with col_kpis:
+        num_kpis = len(valores)
+        colunas = st.columns(num_kpis)
+
+        for i, (label, valor) in enumerate(valores.items()):
+            with colunas[i]:
                 html = f"""
-                    <div style="display: flex; align-items: center; justify-content: {alinhamento}; margin-top: {margin_top}; margin-bottom: {margin_bottom}; gap: 10px;">
-                        <img src="data:{imagem_tipo};base64,{imagem_base64}" style="height: {altura_imagem};" />
-                        <div style="line-height: 1;">
-                            <span style="font-size:{fonte_label}; color:{cor_label};">{label}</span><br>
-                            <b style="font-size:{fonte_valor}; color:{cor_valor};">{valor:,.0f}</b>
-                        </div>
+                    <div style="text-align: left; margin-top: {margin_top}; margin-bottom: {margin_bottom}; line-height: 1.2;">
+                        <span style="font-size:{fonte_label}; color:{cor_label}; white-space: nowrap;">{label}</span><br>
+                        <b style="font-size:{fonte_valor}; color:{cor_valor}; white-space: nowrap;">{valor:,.0f}</b>
                     </div>
                 """
-            else:
-                html = f"""
-                    <div style="text-align:{alinhamento}; margin-top: {margin_top}; margin-bottom: {margin_bottom};">
-                        <span style="font-size:{fonte_label}; color:{cor_label};">{label}</span><br>
-                        <b style="font-size:{fonte_valor}; color:{cor_valor};">{valor:,.0f}</b>
-                    </div>
-                """
-            st.markdown(html, unsafe_allow_html=True)
+                st.markdown(html, unsafe_allow_html=True)
+
 
 # ==================================================
 # Renderização do Dashboard em Tela Única (Full HD)
@@ -1053,13 +1064,13 @@ with col1:
         cor_label="#444",
         fonte_valor="22px",
         fonte_label="14px",
-        alinhamento="left",
         altura_imagem="26px",
         margin_top="0px",
-        margin_bottom="10px"
+        margin_bottom="10px",
+        padding_top_imagem="15px"
     )
     if not df_agg_viagens.empty:
-        st.plotly_chart(grafico_numero_viagens.update_layout(height=300), use_container_width=True)
+        st.plotly_chart(grafico_numero_viagens.update_layout(height=270), use_container_width=True)
 
 with col2:
     valores_kpis = {
@@ -1079,18 +1090,18 @@ with col2:
         cor_label="#444",
         fonte_valor="22px",
         fonte_label="14px",
-        alinhamento="left",
         altura_imagem="26px",
         margin_top="0px",
-        margin_bottom="10px"
+        margin_bottom="10px",
+        padding_top_imagem="15px"
     )
     if not df_agg_viagens.empty:
-        st.plotly_chart(grafico_movimentacao_litogia.update_layout(height=300), use_container_width=True)
+        st.plotly_chart(grafico_movimentacao_litogia.update_layout(height=270), use_container_width=True)
 
 # Cabeçalho Moagem
 st.markdown(f"""
     <div style="display: flex; justify-content: space-between; align-items: center;
-        background-color: #2D3D70; padding: 0px 30px; border-radius: 8px; margin-top: 40px; margin-bottom: 5px;">
+        background-color: #2D3D70; padding: 0px 30px; border-radius: 8px; margin-top: 70px; margin-bottom: 5px;">
         <img src="data:{tipo_esquerda2};base64,{base64_esquerda2}" style="height: 40px;">
         <h1 style="color: white; font-size: 28px; margin: 0;">Performance Planta - Aura Almas</h1>
         <img src="data:{tipo_direita};base64,{base64_direita}" style="height: 40px;">
@@ -1117,13 +1128,13 @@ with col3:
         cor_label="#444",
         fonte_valor="22px",
         fonte_label="14px",
-        alinhamento="left",
         altura_imagem="26px",
         margin_top="0px",
-        margin_bottom="10px"
+        margin_bottom="10px",
+        padding_top_imagem="15px"
     )
     if not df_agg_britagem.empty:
-        st.plotly_chart(grafico_barra_britagem.update_layout(height=300), use_container_width=True)
+        st.plotly_chart(grafico_barra_britagem.update_layout(height=270), use_container_width=True)
 with col4:
     valores_kpis = {
         "Acumulado": valor_mensal_moagem,
@@ -1142,10 +1153,10 @@ with col4:
         cor_label="#444",
         fonte_valor="22px",
         fonte_label="14px",
-        alinhamento="left",
         altura_imagem="26px",
         margin_top="0px",
-        margin_bottom="10px"
+        margin_bottom="10px",
+        padding_top_imagem="15px"
     )
     if not df_agg_moagem.empty:
-        st.plotly_chart(grafico_barra_moagem.update_layout(height=300), use_container_width=True)
+        st.plotly_chart(grafico_barra_moagem.update_layout(height=270), use_container_width=True)
