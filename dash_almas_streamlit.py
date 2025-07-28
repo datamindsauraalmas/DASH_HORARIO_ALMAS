@@ -13,7 +13,7 @@ from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
 
 # Atualiza a cada 5 minutos
-st_autorefresh(interval=500 * 1000, key="auto_refresh")
+st_autorefresh(interval=250 * 1000, key="auto_refresh")
 
 # ==============================================
 # Carregamento das tabelas
@@ -206,7 +206,7 @@ def gerar_grafico_colunas(
             annotation_position="top right",
             annotation_font_size=12,
             annotation_font_color="black",
-            annotation_yshift=30
+            annotation_yshift=50
         )
 
     # Linha vertical da troca de dia + rótulos de datas abaixo do eixo X
@@ -280,13 +280,6 @@ def gerar_grafico_empilhado(
 
     # Ordena cronologicamente
     df_plot = df_plot.sort_values(['hora', 'categoria'])
-
-    # Cria a string de hora (somente HH) para exibição no eixo x
-    #df_plot['hora_str'] = df_plot['hora'].dt.strftime('%H')
-
-    # Garante ordenação com base em data/hora real
-    #categorias_x = df_plot.drop_duplicates('hora').sort_values('hora')['hora_str'].tolist()
-    #df_plot['hora_str'] = pd.Categorical(df_plot['hora_str'], categories=categorias_x, ordered=True)
 
     # Cria a string de hora (somente HH) para exibição no eixo x
     df_plot['hora_str'] = df_plot['hora'].dt.strftime('%H')
@@ -444,11 +437,11 @@ grafico_numero_viagens = gerar_grafico_colunas(
 # Grafico 2 - Movimentação Total por litologia
 # Define cores e ordem desejada
 cores_customizadas = {
-    'HG': '#FF5733',
-    'MG': '#FFC300',
+    'Estéril': '#AAAAAA',
     'LG': '#4CAF50',
-    'HL': '#2D3D70',
-    'Estéril': '#AAAAAA'
+    'MG': '#FFC300',
+    'HG': '#FF5733',
+    'HL': '#2D3D70'
 }
 
 # Agrega os dados
@@ -492,7 +485,7 @@ grafico_barra_britagem = gerar_grafico_colunas(
     valor_referencia=310,  
     titulo='Alimentação Britagem (t)',
     yaxis_min=0,
-    yaxis_max=420,
+    yaxis_max=470,
     colunas_tooltip=['Justificativa Alimentação Britagem']
 )
 
@@ -510,7 +503,7 @@ grafico_barra_moagem = gerar_grafico_colunas(
     valor_referencia=250,  
     titulo='Alimentação Moagem (t)',
     yaxis_min=0,
-    yaxis_max=420,
+    yaxis_max=470,
     colunas_tooltip=['Justificativa Alimentação Moagem','Desvio taxa Moagem']
 )
 
