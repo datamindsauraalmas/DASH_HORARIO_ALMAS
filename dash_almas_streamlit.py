@@ -689,13 +689,17 @@ def ritmo_dia_atual(
 
     # Padroniza datetime com fuso horário
     df[coluna_datahora] = pd.to_datetime(df[coluna_datahora])
+
     if df[coluna_datahora].dt.tz is None:
         df[coluna_datahora] = df[coluna_datahora].dt.tz_localize(fuso)
     else:
         df[coluna_datahora] = df[coluna_datahora].dt.tz_convert(fuso)
 
     # Filtra apenas registros do dia atual
-    df_dia = df[df[coluna_datahora].dt.date == hoje]
+    df_dia = df[
+    (df[coluna_datahora].dt.date == hoje) &
+    (df[coluna_datahora].dt.hour < agora.hour)
+]
 
     if df_dia.empty:
         return 0.0
@@ -712,13 +716,15 @@ def ritmo_dia_atual(
     elif tipo_agregacao == 'count':
         acumulado = df_dia[coluna_valor].count()
     else:
-        raise ValueError(f"Tipo de agregação '{tipo_agregacao}' não suportado.")
+        raise ValueError(f"❌ Tipo de agregação '{tipo_agregacao}' não suportado.")
 
     # Considera 00:00 do dia atual como início
     inicio_dia = datetime.combine(hoje, datetime.min.time()).replace(tzinfo=fuso)
-    fim_dia = datetime.combine(hoje, datetime.max.time()).replace(tzinfo=fuso)
+    fim_dia = datetime.combine(hoje, datetime.min.time()).replace(tzinfo=fuso) + pd.Timedelta(hours=24)
 
-    horas_decorridas = int((agora - inicio_dia).total_seconds() // 3600)
+
+    #horas_decorridas = int((agora - inicio_dia).total_seconds() // 3600)
+    horas_decorridas = horas_decorridas = agora.hour
     total_horas_dia = int((fim_dia - inicio_dia).total_seconds() // 3600)
 
     if horas_decorridas == 0 or total_horas_dia - horas_decorridas == 0:
