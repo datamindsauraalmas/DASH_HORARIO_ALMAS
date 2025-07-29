@@ -1,18 +1,17 @@
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-import base64
 import os
 import pytz
 
 from datetime import datetime, timedelta
-from PIL import Image
-from io import BytesIO
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
-# Atualiza a cada 5 minutos
+# Atualiza a cada 10 minutos
 st_autorefresh(interval=600 * 1000, key="auto_refresh")
 
 # ==============================================
@@ -51,9 +50,8 @@ def ler_dados_supabase(tabela: str, pagina_tamanho: int = 1000) -> pd.DataFrame:
     return pd.DataFrame(dados_completos)
 
 # Lê dados da tabela 'movimentacao_mina'
-df_transporte_filtrado = ler_dados_supabase("movimentacao_mina")
-df_totalizador = ler_dados_supabase("alimentacao_moagem")
-df_dados_planta = ler_dados_supabase("dados_planta")
+df_dados_mina = ler_dados_supabase("repositorio_mina_fuso")
+df_dados_planta = ler_dados_supabase("repositorio_planta_fuso")
     
 # Renomer nomes das colunas para melhor exibição no Tooltip dos graficos
 df_dados_planta.rename(columns={
@@ -67,9 +65,32 @@ df_dados_planta.rename(columns={
 # ==============================================
 
 #Parametros para filtrar os dados dos graficos com base nas ultimas 24 horas
-parametro_agora = datetime.now().replace(minute=0, second=0, microsecond=0)-timedelta(hours=3)
-parametro_inicio = parametro_agora - timedelta(hours=24)
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
+# Define fuso horário
+tz_br = ZoneInfo("America/Sao_Paulo")
+tz_utc = ZoneInfo("UTC")
+
+# Agora (em Brasília)
+agora_brasilia = datetime.now(tz_br)
+
+# Ajusta para hora cheia anterior (ex: se for 15h27 → considera 14h)
+agora_brasilia = agora_brasilia.replace(minute=0, second=0, microsecond=0)
+
+# Parâmetros em BRT
+parametro_inicio_brt = agora_brasilia - timedelta(hours=24)
+parametro_fim_brt = agora_brasilia
+
+# Converte para UTC
+parametro_inicio = parametro_inicio_brt.astimezone(tz_utc)
+parametro_agora = parametro_fim_brt.astimezone(tz_utc)
+
+# Para debug:
+print("Intervalo desejado em BRT:", parametro_inicio_brt, "→", parametro_fim_brt)
+print("Intervalo usado em UTC:", parametro_inicio, "→", parametro_agora)
+
+# Função para agregar dados por hora
 def agregar_por_hora(
     df,
     valor_coluna,
@@ -78,32 +99,58 @@ def agregar_por_hora(
     tipo_agregacao='sum',
     colunas_texto=None
 ):
-    agora = parametro_agora
-    inicio = parametro_inicio
+    # Se DataFrame vazio ou coluna de hora ausente
+    if df is None or df.empty or coluna_hora not in df.columns:
+        return pd.DataFrame(columns=['hora', 'valor'] + (colunas_texto or []))
 
     df_filtrado = df.copy()
-    df_filtrado[coluna_hora] = pd.to_datetime(df_filtrado[coluna_hora], errors='coerce').dt.floor('h')
+
+    # Converte para datetime com UTC; se não der, transforma em NaT
+    df_filtrado[coluna_hora] = pd.to_datetime(df_filtrado[coluna_hora], utc=True, errors='coerce')
+
+    # Remove valores NaT
+    df_filtrado = df_filtrado[df_filtrado[coluna_hora].notna()]
+
+    # Se após isso o DataFrame estiver vazio, retorna um df limpo
+    if df_filtrado.empty:
+        return pd.DataFrame(columns=['hora', 'valor'] + (colunas_texto or []))
+
+    # Floor para hora cheia
+    df_filtrado[coluna_hora] = df_filtrado[coluna_hora].dt.floor('h')
+
+    # Garantir que os parâmetros globais existam
+    if 'parametro_inicio' not in globals() or 'parametro_agora' not in globals():
+        raise ValueError("Parâmetros globais 'parametro_inicio' e 'parametro_agora' não estão definidos.")
+
+    # Filtra pelo intervalo de tempo
+    inicio = parametro_inicio
+    agora = parametro_agora
     df_filtrado = df_filtrado[(df_filtrado[coluna_hora] >= inicio) & (df_filtrado[coluna_hora] < agora)]
 
-    if grupo_material is not None:
+    # Filtra por grupo, se necessário
+    if grupo_material is not None and 'material_group' in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado['material_group'] == grupo_material]
 
-    # Colunas para manter além da hora e valor
+    if df_filtrado.empty:
+        return pd.DataFrame(columns=['hora', 'valor'] + (colunas_texto or []))
+
+    # Define colunas a manter
     colunas_agregadas = [coluna_hora, valor_coluna]
     if colunas_texto:
         colunas_agregadas += colunas_texto
 
+    # Filtra somente colunas existentes para evitar KeyError
+    colunas_agregadas = [col for col in colunas_agregadas if col in df_filtrado.columns]
     df_filtrado = df_filtrado[colunas_agregadas]
 
-    # Realiza agregação
+    # Agregação segura
     df_agrupado = (
         df_filtrado
         .groupby(coluna_hora)
-        .agg({valor_coluna: tipo_agregacao, **{col: 'first' for col in (colunas_texto or [])}})
+        .agg({valor_coluna: tipo_agregacao, **{col: 'first' for col in (colunas_texto or []) if col in df_filtrado.columns}})
         .reset_index()
         .rename(columns={coluna_hora: 'hora', valor_coluna: 'valor'})
     )
-
     return df_agrupado
 
 # Função apra agregar dados a serem usados com a função de grafico empilhado
@@ -114,29 +161,52 @@ def agregar_por_hora_empilhado(
     coluna_empilhamento='material',
     tipo_agregacao='sum'
 ):
-    agora = parametro_agora
-    inicio = parametro_inicio
+    # Valida se DataFrame está vazio ou se coluna de hora não existe
+    if df is None or df.empty or coluna_hora not in df.columns or valor_coluna not in df.columns:
+        return pd.DataFrame(columns=['hora', 'categoria', 'valor'])
 
     df_filtrado = df.copy()
 
-    # Garante que a coluna de hora está formatada corretamente
-    df_filtrado[coluna_hora] = pd.to_datetime(df_filtrado[coluna_hora], errors='coerce').dt.floor('h')
+    # Converte a coluna de hora para datetime com fuso UTC
+    df_filtrado[coluna_hora] = pd.to_datetime(df_filtrado[coluna_hora], utc=True, errors='coerce')
 
-    # Filtro de tempo
-    df_filtrado = df_filtrado[
-        (df_filtrado[coluna_hora] >= inicio) & 
-        (df_filtrado[coluna_hora] < agora)
-    ]
+    # Remove registros com hora inválida
+    df_filtrado = df_filtrado[df_filtrado[coluna_hora].notna()]
 
-    # Agregação por hora e coluna de empilhamento (ex: material)
+    if df_filtrado.empty:
+        return pd.DataFrame(columns=['hora', 'categoria', 'valor'])
+
+    df_filtrado[coluna_hora] = df_filtrado[coluna_hora].dt.floor('h')
+
+    # Parâmetros globais de tempo
+    if 'parametro_inicio' not in globals() or 'parametro_agora' not in globals():
+        raise ValueError("Parâmetros globais 'parametro_inicio' e 'parametro_agora' não definidos.")
+
+    inicio = parametro_inicio
+    agora = parametro_agora
+
+    # Filtro de intervalo
+    df_filtrado = df_filtrado[(df_filtrado[coluna_hora] >= inicio) & (df_filtrado[coluna_hora] < agora)]
+
+    if df_filtrado.empty:
+        return pd.DataFrame(columns=['hora', 'categoria', 'valor'])
+
+    # Valida se coluna de empilhamento existe
+    if coluna_empilhamento not in df_filtrado.columns:
+        return pd.DataFrame(columns=['hora', 'categoria', 'valor'])
+
+    # Agregação segura
     df_agrupado = (
         df_filtrado
         .groupby([coluna_hora, coluna_empilhamento])[valor_coluna]
         .agg(tipo_agregacao)
         .reset_index()
-        .rename(columns={coluna_hora: 'hora', coluna_empilhamento: 'categoria', valor_coluna: 'valor'})
+        .rename(columns={
+            coluna_hora: 'hora',
+            coluna_empilhamento: 'categoria',
+            valor_coluna: 'valor'
+        })
     )
-
     return df_agrupado
 
 # ==============================================
@@ -152,11 +222,21 @@ def gerar_grafico_colunas(
     yaxis_max=None,
     colunas_tooltip=None
 ):
-    df_plot = df_agrupado.copy()
-    df_plot['hora_str'] = df_plot['hora'].dt.strftime('%H')
-    df_plot['data'] = df_plot['hora'].dt.strftime('%d/%m')
+    tz_br = ZoneInfo("America/Sao_Paulo")
+    df_plot = df_agrupado.copy() if df_agrupado is not None else pd.DataFrame(columns=['hora', 'valor'])
 
-    # Geração do campo customdata com base nas colunas fornecidas
+    for col in ['hora', 'valor']:
+        if col not in df_plot.columns:
+            df_plot[col] = pd.NaT if col == 'hora' else 0
+
+    # Garante que hora está com timezone e converte para horário de Brasília
+    df_plot['hora'] = pd.to_datetime(df_plot['hora'], utc=True, errors='coerce')
+    df_plot['hora_br'] = df_plot['hora'].dt.tz_convert(tz_br)
+
+    # Usa hora convertida para formatação e lógica de troca de dia
+    df_plot['hora_str'] = df_plot['hora_br'].dt.strftime('%H')
+    df_plot['data'] = df_plot['hora_br'].dt.strftime('%d/%m')
+
     colunas_tooltip = colunas_tooltip or []
     customdata = []
 
@@ -166,24 +246,22 @@ def gerar_grafico_colunas(
             valor = row.get(col)
             if pd.notnull(valor):
                 linha_tooltip.append(f"<b>{col}</b>: {valor}")
-        linha_tooltip.insert(0, f"<b>Data</b>: {row['data']}")  # sempre adiciona a data
+        linha_tooltip.insert(0, f"<b>Data</b>: {row['data']}")
         linha_tooltip.append(f"<b>Hora</b>: {row['hora_str']}")
         linha_tooltip.append(f"<b>Valor</b>: {row['valor']:,.0f}".replace(",", "X").replace(".", ",").replace("X", "."))
         customdata.append("<br>".join(linha_tooltip))
 
-    # Aplica cores dependendo se há ou não valor_referencia
     if valor_referencia is not None:
         df_plot['cor'] = df_plot['valor'].apply(lambda x: "#F4614D" if x < valor_referencia else "#2D3D70")
     else:
         df_plot['cor'] = "#2D3D70"
 
-    # Identifica índice de troca de dia
-    dia_hoje = datetime.now().date()
-    troca_idx = df_plot[df_plot['hora'].dt.date == dia_hoje].index.min()
+    dia_hoje_br = datetime.now(tz_br).date()
+    troca_idx = df_plot[df_plot['hora_br'].dt.date == dia_hoje_br].index.min()
+    if pd.isna(troca_idx):
+        troca_idx = None
 
     fig = go.Figure()
-
-    # Barras com texto personalizado no hover
     fig.add_trace(go.Bar(
         x=df_plot['hora_str'],
         y=df_plot['valor'],
@@ -196,7 +274,6 @@ def gerar_grafico_colunas(
         customdata=customdata
     ))
 
-    # Linha da meta (opcional)
     if valor_referencia is not None:
         fig.add_hline(
             y=valor_referencia,
@@ -209,7 +286,6 @@ def gerar_grafico_colunas(
             annotation_yshift=50
         )
 
-    # Linha vertical da troca de dia + rótulos de datas abaixo do eixo X
     if troca_idx is not None and troca_idx > 0:
         fig.add_vline(
             x=troca_idx - 0.5,
@@ -222,7 +298,7 @@ def gerar_grafico_colunas(
             y=1.09,
             xref='x',
             yref='paper',
-            text=(dia_hoje - timedelta(days=1)).strftime('%d/%m'),
+            text=(dia_hoje_br - timedelta(days=1)).strftime('%d/%m'),
             showarrow=False,
             yanchor="top",
             font=dict(size=14, color="black")
@@ -232,38 +308,22 @@ def gerar_grafico_colunas(
             y=1.09,
             xref='x',
             yref='paper',
-            text=dia_hoje.strftime('%d/%m'),
+            text=dia_hoje_br.strftime('%d/%m'),
             showarrow=False,
             yanchor="top",
             font=dict(size=14, color="black")
         )
 
-    # Layout final
     fig.update_layout(
-        title=dict(
-            text=titulo,
-            x=0.0,
-            xanchor='left',
-            font=dict(size=20, family='Arial', color='black')
-        ),
-        xaxis=dict(
-            tickangle=0,
-            type='category',
-            tickfont=dict(size=16, family='Arial', color='black'),
-            showline=True,
-            linecolor='black'
-        ),
-        yaxis=dict(
-            visible=False,
-            range=[yaxis_min, yaxis_max] if yaxis_min is not None and yaxis_max is not None else None
-        ),
+        title=dict(text=titulo, x=0.0, xanchor='left', font=dict(size=20, family='Arial', color='black')),
+        xaxis=dict(tickangle=0, type='category', tickfont=dict(size=16, family='Arial', color='black'), showline=True, linecolor='black'),
+        yaxis=dict(visible=False, range=[yaxis_min, yaxis_max] if yaxis_min is not None and yaxis_max is not None else None),
         bargap=0.2,
         margin=dict(t=40, b=20, l=0, r=0),
         plot_bgcolor='white',
         paper_bgcolor='white',
         height=300
     )
-
     return fig
 
 # Função para criar grafico de barras empilhadas
@@ -276,28 +336,32 @@ def gerar_grafico_empilhado(
     cores_categorias=None,
     tooltip_template=None
 ):
+    tz_br = ZoneInfo("America/Sao_Paulo")
     df_plot = df_agrupado.copy()
 
-    # Ordena cronologicamente
-    df_plot = df_plot.sort_values(['hora', 'categoria'])
+    if df_plot.empty or 'hora' not in df_plot.columns or 'categoria' not in df_plot.columns:
+        fig = go.Figure()
+        fig.update_layout(
+            title=dict(text=f"{titulo} (sem dados disponíveis)", x=0.0, xanchor='left',
+                       font=dict(size=20, family='Arial', color='gray')),
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            height=300
+        )
+        return fig
 
-    # Cria a string de hora (somente HH) para exibição no eixo x
-    df_plot['hora_str'] = df_plot['hora'].dt.strftime('%H')
+    df_plot['hora'] = pd.to_datetime(df_plot['hora'], utc=True, errors='coerce')
+    df_plot['hora_br'] = df_plot['hora'].dt.tz_convert(tz_br)
+    df_plot = df_plot.sort_values(['hora_br', 'categoria'])
 
-# Remove duplicatas e mantém ordem cronológica
-    categorias_x = list(dict.fromkeys(df_plot.sort_values('hora')['hora_str'].tolist()))
-
-# Converte para categórico com categorias ordenadas
+    df_plot['hora_str'] = df_plot['hora_br'].dt.strftime('%H')
+    categorias_x = list(dict.fromkeys(df_plot.sort_values('hora_br')['hora_str'].tolist()))
     df_plot['hora_str'] = pd.Categorical(df_plot['hora_str'], categories=categorias_x, ordered=True)
 
+    dia_hoje_br = datetime.now(tz_br).date()
+    troca_hora = df_plot[df_plot['hora_br'].dt.date == dia_hoje_br]['hora_str'].min()
+    troca_hora_str = troca_hora if not pd.isna(troca_hora) else None
 
-    # Detecta a hora de troca de dia
-    dia_hoje = datetime.now().date()
-    troca_hora = df_plot[df_plot['hora'].dt.date == dia_hoje]['hora'].min()
-    #troca_hora_str = troca_hora.strftime('%H') if troca_hora is not None else None
-    troca_hora_str = troca_hora.strftime('%H') if not pd.isna(troca_hora) else None
-
-    # Cores padrão
     if cores_categorias is None:
         cores_categorias = {
             'Estéril': '#AAAAAA',
@@ -307,35 +371,33 @@ def gerar_grafico_empilhado(
             'HL': '#2D3D70'
         }
 
-    categorias = list(cores_categorias.keys())
-
     if tooltip_template is None:
-        tooltip_template = "<b>Hora</b>: %{x}<br><b>Valor</b>: %{y:,}<br><b>Categoria</b>: %{customdata[0]}<extra></extra>"
+        tooltip_template = (
+            "<b>Hora</b>: %{x}<br>"
+            "<b>Valor</b>: %{y:,.0f}<br>"
+            "<b>Categoria</b>: %{customdata[0]}<extra></extra>"
+        )
 
     fig = go.Figure()
-
-    for cat in categorias:
+    for cat, cor in cores_categorias.items():
         df_cat = df_plot[df_plot['categoria'] == cat]
+        if not df_cat.empty:
+            fig.add_trace(go.Bar(
+                x=df_cat['hora_str'],
+                y=df_cat['valor'],
+                name=cat,
+                marker_color=cor,
+                customdata=df_cat[['categoria']],
+                hovertemplate=tooltip_template,
+                showlegend=True
+            ))
 
-        fig.add_trace(go.Bar(
-            x=df_cat['hora_str'],
-            y=df_cat['valor'],
-            name=str(cat),
-            marker_color=cores_categorias[cat],
-            customdata=df_cat[['categoria']],
-            hovertemplate=tooltip_template,
-            showlegend=True
-        ))
-
-    # Rótulos de totais por hora_str
     df_totais = df_plot.groupby('hora_str', observed=True)['valor'].sum().reset_index()
-    #df_totais['texto'] = df_totais['valor'].apply(lambda v: f"{v:,.0f}".replace(",", "X").replace(".", ",").replace("X", "."))
     df_totais['texto'] = df_totais['valor'].apply(lambda v: f"{v/1000:,.1f}".replace(",", "X").replace(".", ",").replace("X", "."))
-
 
     fig.add_trace(go.Scatter(
         x=df_totais['hora_str'],
-        y=df_totais['valor'] + (df_totais['valor'].max() * 0.03),  # deslocamento para cima
+        y=df_totais['valor'] + (df_totais['valor'].max() * 0.03 if df_totais['valor'].max() > 0 else 1),
         mode='text',
         text=df_totais['texto'],
         textposition='top center',
@@ -343,7 +405,6 @@ def gerar_grafico_empilhado(
         textfont=dict(size=14, color='black')
     ))
 
-    # Linha de troca de dia (se aplicável)
     if troca_hora_str in categorias_x:
         troca_pos = categorias_x.index(troca_hora_str)
 
@@ -353,13 +414,12 @@ def gerar_grafico_empilhado(
             line_color="black",
             line_width=2
         )
-
         fig.add_annotation(
             x=troca_pos - 1.5,
             y=1.09,
             xref='x',
             yref='paper',
-            text=(dia_hoje - timedelta(days=1)).strftime('%d/%m'),
+            text=(dia_hoje_br - timedelta(days=1)).strftime('%d/%m'),
             showarrow=False,
             yanchor="top",
             font=dict(size=14, color="black")
@@ -369,7 +429,7 @@ def gerar_grafico_empilhado(
             y=1.09,
             xref='x',
             yref='paper',
-            text=dia_hoje.strftime('%d/%m'),
+            text=dia_hoje_br.strftime('%d/%m'),
             showarrow=False,
             yanchor="top",
             font=dict(size=14, color="black")
@@ -377,12 +437,7 @@ def gerar_grafico_empilhado(
 
     fig.update_layout(
         barmode='stack',
-        title=dict(
-            text=titulo,
-            x=0.0,
-            xanchor='left',
-            font=dict(size=20, family='Arial', color='black')
-        ),
+        title=dict(text=titulo, x=0.0, xanchor='left', font=dict(size=20, family='Arial', color='black')),
         xaxis=dict(
             tickangle=0,
             type='category',
@@ -410,7 +465,6 @@ def gerar_grafico_empilhado(
         paper_bgcolor='white',
         height=300
     )
-
     return fig
 
 # =========================================
@@ -418,7 +472,7 @@ def gerar_grafico_empilhado(
 # =========================================
 
 # Selecionar def com o conteudo
-df_base_mina = df_transporte_filtrado
+df_base_mina = df_dados_mina
 
 # Grafico 1 - Contagem de Viajens
 df_agg_viagens = agregar_por_hora(
@@ -508,9 +562,9 @@ grafico_barra_moagem = gerar_grafico_colunas(
     colunas_tooltip=['Justificativa Alimentação Moagem','Desvio taxa Moagem']
 )
 
-# =========================================================
+# =======================================================================
 # Funções para Calculos de Ritmo, Produção Acumulada e Ritmo de Produção
-# =========================================================
+# =======================================================================
 
 # Função para calcular o acumulado mensal
 def acumulado_mensal(
@@ -519,34 +573,46 @@ def acumulado_mensal(
     coluna_datahora: str,
     tipo_agregacao: str = 'sum'
 ) -> float:
-    # Fuso horário local
+    # Retorno padrão para casos sem dados ou colunas ausentes
+    if df is None or df.empty or coluna_valor not in df.columns or coluna_datahora not in df.columns:
+        return 0.0
+
+    # Define fuso horário local (São Paulo)
     fuso = pytz.timezone('America/Sao_Paulo')
     agora = datetime.now(fuso)
 
-    # Se for dia 1, usar o mês anterior como base
+    # Se for dia 1, considera mês anterior como referência
     data_base = agora - timedelta(days=1) if agora.day == 1 else agora
     mes = data_base.month
     ano = data_base.year
 
-    # Garantir que a coluna de data esteja em datetime com timezone correto
+    # Conversão segura da coluna de data/hora para datetime com fuso horário
     try:
-        df[coluna_datahora] = pd.to_datetime(df[coluna_datahora])
+        df[coluna_datahora] = pd.to_datetime(df[coluna_datahora], errors='coerce')
+        df = df[df[coluna_datahora].notna()]  # remove inválidos
+
+        if df.empty:
+            return 0.0
+
+        # Torna timezone-aware com fuso de SP
         if df[coluna_datahora].dt.tz is None:
-            # Timestamps são tz-naive → localizar com o fuso de São Paulo
             df[coluna_datahora] = df[coluna_datahora].dt.tz_localize(fuso)
         else:
-            # Timestamps já têm timezone → converter para São Paulo
             df[coluna_datahora] = df[coluna_datahora].dt.tz_convert(fuso)
     except Exception as e:
         raise ValueError(f"Erro ao processar a coluna '{coluna_datahora}' como datetime: {e}")
 
-    # Filtrar os dados para o mês e ano desejado
+    # Filtra registros do mês e ano de interesse
     df_filtrado = df[
         (df[coluna_datahora].dt.month == mes) &
         (df[coluna_datahora].dt.year == ano)
     ]
 
-    # Agregação
+    if df_filtrado.empty:
+        return 0.0
+
+    # Agregação segura
+    tipo_agregacao = tipo_agregacao.lower()
     if tipo_agregacao == 'sum':
         return df_filtrado[coluna_valor].sum()
     elif tipo_agregacao == 'mean':
@@ -567,13 +633,41 @@ def acumulado_dia_anterior(
     coluna_datahora: str,
     tipo_agregacao: str = 'sum'
 ) -> float:
-    agora = datetime.now(pytz.timezone('America/Sao_Paulo'))
+    # Validação inicial do DataFrame e colunas
+    if df is None or df.empty or coluna_valor not in df.columns or coluna_datahora not in df.columns:
+        return 0.0
+
+    # Fuso horário local (São Paulo)
+    fuso = pytz.timezone('America/Sao_Paulo')
+    agora = datetime.now(fuso)
     ontem = (agora - timedelta(days=1)).date()
 
-    df[coluna_datahora] = pd.to_datetime(df[coluna_datahora]).dt.tz_convert('America/Sao_Paulo')
+    # Conversão segura da coluna de data/hora para datetime com fuso horário
+    try:
+        df[coluna_datahora] = pd.to_datetime(df[coluna_datahora], errors='coerce')
+        df = df[df[coluna_datahora].notna()]  # Remove registros inválidos
+
+        if df.empty:
+            return 0.0
+
+        # Torna timezone-aware
+        if df[coluna_datahora].dt.tz is None:
+            df[coluna_datahora] = df[coluna_datahora].dt.tz_localize(fuso)
+        else:
+            df[coluna_datahora] = df[coluna_datahora].dt.tz_convert(fuso)
+
+    except Exception as e:
+        raise ValueError(f"Erro ao processar a coluna '{coluna_datahora}' como datetime: {e}")
+
+    # Filtra registros do dia anterior
     df['data'] = df[coluna_datahora].dt.date
     df_filtrado = df[df['data'] == ontem]
 
+    if df_filtrado.empty:
+        return 0.0
+
+    # Agregação segura
+    tipo_agregacao = tipo_agregacao.lower()
     if tipo_agregacao == 'sum':
         return df_filtrado[coluna_valor].sum()
     elif tipo_agregacao == 'mean':
@@ -594,13 +688,39 @@ def acumulado_dia_atual(
     coluna_datahora: str,
     tipo_agregacao: str = 'sum'
 ) -> float:
-    agora = datetime.now(pytz.timezone('America/Sao_Paulo'))
+    # Validação inicial
+    if df is None or df.empty or coluna_valor not in df.columns or coluna_datahora not in df.columns:
+        return 0.0
+
+    fuso = pytz.timezone('America/Sao_Paulo')
+    agora = datetime.now(fuso)
     hoje = agora.date()
 
-    df[coluna_datahora] = pd.to_datetime(df[coluna_datahora]).dt.tz_convert('America/Sao_Paulo')
+    # Conversão segura da coluna de data/hora
+    try:
+        df[coluna_datahora] = pd.to_datetime(df[coluna_datahora], errors='coerce')
+        df = df[df[coluna_datahora].notna()]
+        if df.empty:
+            return 0.0
+
+        # Torna timezone-aware
+        if df[coluna_datahora].dt.tz is None:
+            df[coluna_datahora] = df[coluna_datahora].dt.tz_localize(fuso)
+        else:
+            df[coluna_datahora] = df[coluna_datahora].dt.tz_convert(fuso)
+
+    except Exception as e:
+        raise ValueError(f"Erro ao processar a coluna '{coluna_datahora}' como datetime: {e}")
+
+    # Filtragem por data atual
     df['data'] = df[coluna_datahora].dt.date
     df_filtrado = df[df['data'] == hoje]
 
+    if df_filtrado.empty:
+        return 0.0
+
+    # Agregação
+    tipo_agregacao = tipo_agregacao.lower()
     if tipo_agregacao == 'sum':
         return df_filtrado[coluna_valor].sum()
     elif tipo_agregacao == 'mean':
@@ -614,6 +734,7 @@ def acumulado_dia_atual(
     else:
         raise ValueError(f"Tipo de agregação '{tipo_agregacao}' não suportado.")
 
+
 # Função para calcular o ritmo de produção
 def ritmo_mensal(
     df: pd.DataFrame,
@@ -621,24 +742,32 @@ def ritmo_mensal(
     coluna_datahora: str,
     tipo_agregacao: str = 'sum'
 ) -> float:
+    if df is None or df.empty or coluna_valor not in df.columns or coluna_datahora not in df.columns:
+        return 0.0
+
     fuso = pytz.timezone('America/Sao_Paulo')
     agora = datetime.now(fuso)
 
-    if agora.day == 1:
-        data_base = agora - timedelta(days=1)
-    else:
-        data_base = agora
+    # Se for dia 1, usa o mês anterior como base
+    data_base = agora - timedelta(days=1) if agora.day == 1 else agora
+    mes, ano = data_base.month, data_base.year
 
-    mes = data_base.month
-    ano = data_base.year
+    try:
+        df[coluna_datahora] = pd.to_datetime(df[coluna_datahora], errors='coerce')
+        df = df[df[coluna_datahora].notna()]
+        if df.empty:
+            return 0.0
 
-    # Corrigir datetime com fuso horário (atenção aqui!)
-    df[coluna_datahora] = pd.to_datetime(df[coluna_datahora])
-    if df[coluna_datahora].dt.tz is None:
-        df[coluna_datahora] = df[coluna_datahora].dt.tz_localize(fuso)
-    else:
-        df[coluna_datahora] = df[coluna_datahora].dt.tz_convert(fuso)
+        # Garantir timezone-aware
+        if df[coluna_datahora].dt.tz is None:
+            df[coluna_datahora] = df[coluna_datahora].dt.tz_localize(fuso)
+        else:
+            df[coluna_datahora] = df[coluna_datahora].dt.tz_convert(fuso)
 
+    except Exception as e:
+        raise ValueError(f"Erro ao processar a coluna '{coluna_datahora}' como datetime: {e}")
+
+    # Filtragem para o mês em questão
     df_mes = df[
         (df[coluna_datahora].dt.month == mes) &
         (df[coluna_datahora].dt.year == ano)
@@ -647,6 +776,8 @@ def ritmo_mensal(
     if df_mes.empty:
         return 0.0
 
+    # Agregação
+    tipo_agregacao = tipo_agregacao.lower()
     if tipo_agregacao == 'sum':
         acumulado = df_mes[coluna_valor].sum()
     elif tipo_agregacao == 'mean':
@@ -660,18 +791,16 @@ def ritmo_mensal(
     else:
         raise ValueError(f"Tipo de agregação '{tipo_agregacao}' não suportado.")
 
+    # Cálculo do ritmo projetado para o fim do mês
     data_min = df_mes[coluna_datahora].min()
-    agora = datetime.now(fuso).replace(minute=0, second=0, microsecond=0)
-    data_max = pd.Timestamp(agora)
-
+    data_max = agora.replace(minute=0, second=0, microsecond=0)
     horas_decorridas = int((data_max - data_min).total_seconds() // 3600)
 
     inicio_mes = pd.Timestamp(datetime(ano, mes, 1), tz=fuso)
-    inicio_mes_proximo = (inicio_mes + pd.offsets.MonthBegin(1))
-    fim_mes = inicio_mes_proximo - timedelta(seconds=1)
+    fim_mes = (inicio_mes + pd.offsets.MonthBegin(1)) - timedelta(seconds=1)
     total_horas_mes = int((fim_mes - inicio_mes).total_seconds() // 3600) + 1
 
-    if total_horas_mes - horas_decorridas == 0:
+    if horas_decorridas == 0 or (total_horas_mes - horas_decorridas) <= 0:
         return acumulado
 
     ritmo = ((acumulado / horas_decorridas) * (total_horas_mes - horas_decorridas)) + acumulado
@@ -684,28 +813,38 @@ def ritmo_dia_atual(
     coluna_datahora: str,
     tipo_agregacao: str = 'sum'
 ) -> float:
+    if df is None or df.empty or coluna_valor not in df.columns or coluna_datahora not in df.columns:
+        return 0.0
+
     fuso = pytz.timezone('America/Sao_Paulo')
     agora = datetime.now(fuso).replace(minute=0, second=0, microsecond=0)
     hoje = agora.date()
 
-    # Padroniza datetime com fuso horário
-    df[coluna_datahora] = pd.to_datetime(df[coluna_datahora])
+    try:
+        df[coluna_datahora] = pd.to_datetime(df[coluna_datahora], errors='coerce')
+        df = df[df[coluna_datahora].notna()]
+        if df.empty:
+            return 0.0
 
-    if df[coluna_datahora].dt.tz is None:
-        df[coluna_datahora] = df[coluna_datahora].dt.tz_localize(fuso)
-    else:
-        df[coluna_datahora] = df[coluna_datahora].dt.tz_convert(fuso)
+        if df[coluna_datahora].dt.tz is None:
+            df[coluna_datahora] = df[coluna_datahora].dt.tz_localize(fuso)
+        else:
+            df[coluna_datahora] = df[coluna_datahora].dt.tz_convert(fuso)
 
-    # Filtra apenas registros do dia atual
+    except Exception as e:
+        raise ValueError(f"Erro ao processar a coluna '{coluna_datahora}' como datetime: {e}")
+
+    # Filtra dados do dia atual até a hora corrente (sem incluir a hora atual)
     df_dia = df[
-    (df[coluna_datahora].dt.date == hoje) &
-    (df[coluna_datahora].dt.hour < agora.hour)
-]
+        (df[coluna_datahora].dt.date == hoje) &
+        (df[coluna_datahora].dt.hour < agora.hour)
+    ]
 
     if df_dia.empty:
         return 0.0
 
-    # Cálculo do acumulado conforme tipo de agregação
+    # Agregação do acumulado até o momento
+    tipo_agregacao = tipo_agregacao.lower()
     if tipo_agregacao == 'sum':
         acumulado = df_dia[coluna_valor].sum()
     elif tipo_agregacao == 'mean':
@@ -717,20 +856,15 @@ def ritmo_dia_atual(
     elif tipo_agregacao == 'count':
         acumulado = df_dia[coluna_valor].count()
     else:
-        raise ValueError(f"❌ Tipo de agregação '{tipo_agregacao}' não suportado.")
+        raise ValueError(f"Tipo de agregação '{tipo_agregacao}' não suportado.")
 
-    # Considera 00:00 do dia atual como início
-    inicio_dia = datetime.combine(hoje, datetime.min.time()).replace(tzinfo=fuso)
-    fim_dia = datetime.combine(hoje, datetime.min.time()).replace(tzinfo=fuso) + pd.Timedelta(hours=24)
-
-
-    #horas_decorridas = int((agora - inicio_dia).total_seconds() // 3600)
-    horas_decorridas = horas_decorridas = agora.hour
-    total_horas_dia = int((fim_dia - inicio_dia).total_seconds() // 3600)
+    horas_decorridas = agora.hour
+    total_horas_dia = 24
 
     if horas_decorridas == 0 or total_horas_dia - horas_decorridas == 0:
         return acumulado
 
+    # Projeção do ritmo até o final do dia
     ritmo = ((acumulado / horas_decorridas) * (total_horas_dia - horas_decorridas)) + acumulado
     return ritmo
 
@@ -743,7 +877,7 @@ def ritmo_dia_atual(
 
 # 1 - Acumulado Movimentação mina do mês
 valor_mensal_movimentacao_mina = acumulado_mensal(
-    df=df_transporte_filtrado,
+    df=df_dados_mina,
     coluna_valor='calculated_mass',
     coluna_datahora='hora_completa',
     tipo_agregacao='sum'
@@ -751,7 +885,7 @@ valor_mensal_movimentacao_mina = acumulado_mensal(
 
 # 2 - Acumulado Viagens mina do mês
 valor_mensal_viagens = acumulado_mensal(
-    df=df_transporte_filtrado,
+    df=df_dados_mina,
     coluna_valor='calculated_mass',
     coluna_datahora='hora_completa',
     tipo_agregacao='count'
@@ -778,7 +912,7 @@ valor_mensal_moagem = acumulado_mensal(
 
 # 1 - Ritmo Britagem do mês
 ritmo_movimentacao = ritmo_mensal(
-    df=df_transporte_filtrado,
+    df=df_dados_mina,
     coluna_valor='calculated_mass',
     coluna_datahora='hora_completa',
     tipo_agregacao='sum'
@@ -786,7 +920,7 @@ ritmo_movimentacao = ritmo_mensal(
 
 # 2 - Ritmo Britagem do mês
 ritmo_viagens = ritmo_mensal(
-    df=df_transporte_filtrado,
+    df=df_dados_mina,
     coluna_valor='calculated_mass',
     coluna_datahora='hora_completa',
     tipo_agregacao='count'
@@ -813,7 +947,7 @@ ritmo_moagem = ritmo_mensal(
 
 # 1 - Dia anterior movimentação de mina
 valor_ontem_movimentacao = acumulado_dia_anterior(
-    df=df_transporte_filtrado,
+    df=df_dados_mina,
     coluna_valor='calculated_mass',
     coluna_datahora='hora_completa',
     tipo_agregacao='sum'
@@ -821,7 +955,7 @@ valor_ontem_movimentacao = acumulado_dia_anterior(
 
 # 2 - Dia anterior movimentação de mina
 valor_ontem_viagens= acumulado_dia_anterior(
-    df=df_transporte_filtrado,
+    df=df_dados_mina,
     coluna_valor='calculated_mass',
     coluna_datahora='hora_completa',
     tipo_agregacao='count'
@@ -848,7 +982,7 @@ valor_ontem_moagem = acumulado_dia_anterior(
 
 # 1 - Dia atual movimentação de mina
 valor_hoje_movimentacao = acumulado_dia_atual(
-    df=df_transporte_filtrado,
+    df=df_dados_mina,
     coluna_valor='calculated_mass',
     coluna_datahora='hora_completa',
     tipo_agregacao='sum'
@@ -856,7 +990,7 @@ valor_hoje_movimentacao = acumulado_dia_atual(
 
 # 2 - Dia atual movimentação de mina
 valor_hoje_viagens= acumulado_dia_atual(
-    df=df_transporte_filtrado,
+    df=df_dados_mina,
     coluna_valor='calculated_mass',
     coluna_datahora='hora_completa',
     tipo_agregacao='count'
@@ -883,7 +1017,7 @@ valor_hoje_moagem = acumulado_dia_atual(
 
 # 1 - Ritmo Britagem do dia
 ritmo_movimentacao_dia = ritmo_dia_atual(
-    df=df_transporte_filtrado,
+    df=df_dados_mina,
     coluna_valor='calculated_mass',
     coluna_datahora='hora_completa',
     tipo_agregacao='sum'
@@ -891,7 +1025,7 @@ ritmo_movimentacao_dia = ritmo_dia_atual(
 
 # 2 - Ritmo Britagem do dia
 ritmo_viagens_dia = ritmo_dia_atual(
-    df=df_transporte_filtrado,
+    df=df_dados_mina,
     coluna_valor='calculated_mass',
     coluna_datahora='hora_completa',
     tipo_agregacao='count'
@@ -946,35 +1080,25 @@ st.markdown("""
 
 # Carregamento dos icones
 #=========================
+# Importa os base64 já prontos
+from imagens_base64 import (
+    logo_aura,
+    logo_mina,
+    logo_moagem,
+    logo_kpi
+)
 
-#caminhos das imagens
-pasta_atual = os.path.dirname(__file__)
-logo_aura = os.path.join(pasta_atual, "Icones", "Logo_Aura.jpg")
-logo_mina = os.path.join(pasta_atual, "Icones", "caminhao.png")
-logo_moagem = os.path.join(pasta_atual, "Icones", "mill.png")
-logo_kpi = os.path.join(pasta_atual, "Icones", "kpi2.png")
+# Função utilitária para separar base64 e MIME
+def extrair_base64_e_mime(data_uri: str):
+    tipo, base64_data = data_uri.split(",", 1)
+    mime = tipo.split(":")[1].split(";")[0]
+    return base64_data, mime
 
-# Função para converter imagem em base64 e obter o tipo MIME
-def imagem_para_base64_e_tipo(caminho_imagem):
-    imagem = Image.open(caminho_imagem)
-    buffer = BytesIO()
-    extensao = os.path.splitext(caminho_imagem)[1].lower()
-    if extensao in ['.jpg', '.jpeg']:
-        formato = 'JPEG'
-        mime_type = 'image/jpeg'
-    elif extensao == '.png':
-        formato = 'PNG'
-        mime_type = 'image/png'
-    else:
-        raise ValueError(f"Formato de imagem não suportado: {extensao}")
-    imagem.save(buffer, format=formato)
-    imagem_base64 = base64.b64encode(buffer.getvalue()).decode()
-    return imagem_base64, mime_type
-
-base64_esquerda, tipo_esquerda = imagem_para_base64_e_tipo(logo_mina)
-base64_esquerda2, tipo_esquerda2 = imagem_para_base64_e_tipo(logo_moagem)
-base64_direita, tipo_direita = imagem_para_base64_e_tipo(logo_aura)
-base64_kpi, tipo_kpi = imagem_para_base64_e_tipo(logo_kpi)
+# Extração dos dados e tipos
+base64_esquerda, tipo_esquerda = extrair_base64_e_mime(logo_mina)
+base64_esquerda2, tipo_esquerda2 = extrair_base64_e_mime(logo_moagem)
+base64_direita, tipo_direita = extrair_base64_e_mime(logo_aura)
+base64_kpi, tipo_kpi = extrair_base64_e_mime(logo_kpi)
 
 # Funções para Exibição de KPIs Customizados
 #============================================
