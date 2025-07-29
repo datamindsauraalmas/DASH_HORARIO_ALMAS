@@ -13,7 +13,7 @@ from supabase import create_client, Client
 from streamlit_autorefresh import st_autorefresh
 
 # Atualiza a cada 5 minutos
-st_autorefresh(interval=250 * 1000, key="auto_refresh")
+st_autorefresh(interval=600 * 1000, key="auto_refresh")
 
 # ==============================================
 # Carregamento das tabelas
@@ -294,7 +294,8 @@ def gerar_grafico_empilhado(
     # Detecta a hora de troca de dia
     dia_hoje = datetime.now().date()
     troca_hora = df_plot[df_plot['hora'].dt.date == dia_hoje]['hora'].min()
-    troca_hora_str = troca_hora.strftime('%H') if troca_hora is not None else None
+    #troca_hora_str = troca_hora.strftime('%H') if troca_hora is not None else None
+    troca_hora_str = troca_hora.strftime('%H') if not pd.isna(troca_hora) else None
 
     # Cores padrão
     if cores_categorias is None:
