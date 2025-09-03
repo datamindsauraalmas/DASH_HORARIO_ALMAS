@@ -50,15 +50,9 @@ def ler_dados_supabase(tabela: str, pagina_tamanho: int = 1000) -> pd.DataFrame:
     return pd.DataFrame(dados_completos)
 
 # Lê dados da tabela 'movimentacao_mina'
-df_dados_mina = ler_dados_supabase("repositorio_mina_fuso")
-df_dados_planta = ler_dados_supabase("repositorio_planta_fuso")
-    
-# Renomer nomes das colunas para melhor exibição no Tooltip dos graficos
-df_dados_planta.rename(columns={
-    "Moinho_Justificativa do Tempo operando com taxa a menor_(txt)": "Desvio taxa Moagem",
-    "Britagem_Justificativa de NÂO atingir a massa_(txt)": "Justificativa Alimentação Britagem",
-    "Moinho_Justificativa de NÂO atingir a massa_(txt)": "Justificativa Alimentação Moagem"
-}, inplace=True)
+df_dados_mina = ler_dados_supabase("repositorio_mina_realizado")
+df_dados_planta = ler_dados_supabase("repositorio_planta_realizado")
+df_dados_mina_programa = ler_dados_supabase("repositorio_mina_programa")
 
 # ==============================================
 # Funções de agregação
@@ -909,6 +903,15 @@ valor_mensal_moagem = acumulado_mensal(
     tipo_agregacao='sum'
 )
 
+# 5 - Acumulado Mina Programa Mês
+valor_mensal_mina_programa = acumulado_mensal(
+    df=df_dados_mina_programa,
+    coluna_valor='movimentacao_total',
+    coluna_datahora='Data',
+    tipo_agregacao='sum'
+)
+
+
 # Chamada das função de Ritmo do mês
 # ===================================
 
@@ -1014,6 +1017,14 @@ valor_hoje_moagem = acumulado_dia_atual(
     tipo_agregacao='sum'
 )
 
+# 5 - Dia aual programa Mina
+valor_hoje_mina_programa = acumulado_dia_atual(
+    df=df_dados_mina_programa,
+    coluna_valor='movimentacao_total',
+    coluna_datahora='Data',
+    tipo_agregacao='sum'
+)
+
 # Chamada das funções de Ritmo do dia atual
 # ==========================================
 
@@ -1108,48 +1119,28 @@ base64_kpi, tipo_kpi = extrair_base64_e_mime(logo_kpi)
 # Função para exibir KPIs customizados
 def exibir_kpis_customizados(
     valores: dict,
-    imagem_base64: str = None,
-    imagem_tipo: str = None,
     cor_valor: str = "#2D3D70",
     cor_label: str = "#555",
     fonte_valor: str = "22px",
     fonte_label: str = "16px",
-    altura_imagem: str = "64px",
-    largura_imagem: str = "64px",
     margin_top: str = "0px",
-    margin_bottom: str = "10px",
-    padding_top_imagem: str = "0px"  # << novo parâmetro para ajustar posição vertical da imagem
+    margin_bottom: str = "10px"
 ):
-    # Duas colunas principais: imagem (esquerda) + kpis (direita)
-    col_img, col_kpis = st.columns([1, 6])  # Ajuste a proporção se necessário
+    # Calcula número de colunas baseado no número de KPIs
+    num_kpis = len(valores)
+    colunas = st.columns(num_kpis)
 
-    # Bloco da imagem única
-    if imagem_base64 and imagem_tipo:
-        with col_img:
-            st.markdown(
-                f"""
-                <div style="display: flex; justify-content: center; padding-top: {padding_top_imagem}; margin-top: {margin_top}; margin-bottom: {margin_bottom};">
-                    <img src="data:{imagem_tipo};base64,{imagem_base64}"
-                         style="height: {altura_imagem}; width: {largura_imagem}; object-fit: contain;" />
+    # Distribui cada KPI em uma coluna
+    for i, (label, valor) in enumerate(valores.items()):
+        with colunas[i]:
+            html = f"""
+                <div style="text-align: center; margin-top: {margin_top}; margin-bottom: {margin_bottom}; line-height: 1.2;">
+                    <span style="font-size:{fonte_label}; color:{cor_label}; white-space: nowrap;">{label}</span><br>
+                    <b style="font-size:{fonte_valor}; color:{cor_valor}; white-space: nowrap;">{valor:,.0f}</b>
                 </div>
-                """,
-                unsafe_allow_html=True
-            )
+            """
+            st.markdown(html, unsafe_allow_html=True)
 
-    # Bloco dos KPIs
-    with col_kpis:
-        num_kpis = len(valores)
-        colunas = st.columns(num_kpis)
-
-        for i, (label, valor) in enumerate(valores.items()):
-            with colunas[i]:
-                html = f"""
-                    <div style="text-align: left; margin-top: {margin_top}; margin-bottom: {margin_bottom}; line-height: 1.2;">
-                        <span style="font-size:{fonte_label}; color:{cor_label}; white-space: nowrap;">{label}</span><br>
-                        <b style="font-size:{fonte_valor}; color:{cor_valor}; white-space: nowrap;">{valor:,.0f}</b>
-                    </div>
-                """
-                st.markdown(html, unsafe_allow_html=True)
 
 
 # ==================================================
@@ -1178,55 +1169,37 @@ rotulo_acumulado_kpi = "Acumulado M-1" if hoje.day == 1 else "Acumulado"
 
 # Linha 1 - Movimentação Total / Numero de Viagens
 col1, col2 = st.columns([0.5, 0.5], gap="large")
+
 with col1:
     valores_kpis = {
         rotulo_acumulado_kpi: valor_mensal_viagens,
-        "Ritmo Mês Atual": ritmo_viagens,
+        "Ritmo Mês": ritmo_viagens,
         "Ontem": valor_ontem_viagens,
         "Hoje": valor_hoje_viagens,
-        "Ritmo Dia": ritmo_viagens_dia,
-        #"Meta dia": 710
+        "Ritmo Dia": ritmo_viagens_dia
     }
 
-    exibir_kpis_customizados(
-        valores=valores_kpis,
-        imagem_base64=base64_kpi,
-        imagem_tipo=tipo_kpi,
-        cor_valor="#2D3D70",
-        cor_label="#444",
-        fonte_valor="22px",
-        fonte_label="14px",
-        altura_imagem="26px",
-        margin_top="0px",
-        margin_bottom="10px",
-        padding_top_imagem="15px"
-    )
+    # Chama a função para exibir os KPIs
+    exibir_kpis_customizados(valores=valores_kpis)
+
     if not df_agg_viagens.empty:
         st.plotly_chart(grafico_numero_viagens.update_layout(height=270), use_container_width=True)
+
 
 with col2:
     valores_kpis = {
         rotulo_acumulado_kpi: valor_mensal_movimentacao_mina,
         "Ritmo Mês": ritmo_movimentacao,
+        "Meta Mês": valor_mensal_mina_programa,
         "Ontem": valor_ontem_movimentacao,
         "Hoje": valor_hoje_movimentacao,
         "Ritmo Dia": ritmo_movimentacao_dia,
-        #"Meta dia": 71000
+        "Meta Dia": valor_hoje_mina_programa
     }
 
-    exibir_kpis_customizados(
-        valores=valores_kpis,
-        imagem_base64=base64_kpi,
-        imagem_tipo=tipo_kpi,
-        cor_valor="#2D3D70",
-        cor_label="#444",
-        fonte_valor="22px",
-        fonte_label="14px",
-        altura_imagem="26px",
-        margin_top="0px",
-        margin_bottom="10px",
-        padding_top_imagem="15px"
-    )
+    # Chama a função para exibir os KPIs
+    exibir_kpis_customizados(valores=valores_kpis)
+
     if not df_agg_viagens.empty:
         st.plotly_chart(grafico_movimentacao_litogia.update_layout(height=270), use_container_width=True)
 
@@ -1242,53 +1215,39 @@ st.markdown(f"""
 
 # Linha 2 - Alimentação Britagem / Alimentação Moagem
 col3, col4 = st.columns([0.5, 0.5], gap="large")
+
 with col3:
     valores_kpis = {
         rotulo_acumulado_kpi: valor_mensal_britagem,
         "Ritmo Mês": ritmo_britagem,
         "Ontem": valor_ontem_britagem,
         "Hoje": valor_hoje_britagem,
-        "Ritmo Dia": ritmo_britagem_dia,
-        #"Meta dia": 71000
+        "Ritmo Dia": ritmo_britagem_dia
     }
 
-    exibir_kpis_customizados(
-        valores=valores_kpis,
-        imagem_base64=base64_kpi,
-        imagem_tipo=tipo_kpi,
-        cor_valor="#2D3D70",
-        cor_label="#444",
-        fonte_valor="22px",
-        fonte_label="14px",
-        altura_imagem="26px",
-        margin_top="0px",
-        margin_bottom="10px",
-        padding_top_imagem="15px"
-    )
+    # Exibe os KPIs com a nova função
+    exibir_kpis_customizados(valores=valores_kpis)
+
     if not df_agg_britagem.empty:
-        st.plotly_chart(grafico_barra_britagem.update_layout(height=270), use_container_width=True)
+        st.plotly_chart(
+            grafico_barra_britagem.update_layout(height=270),
+            use_container_width=True
+        )
+
 with col4:
     valores_kpis = {
         rotulo_acumulado_kpi: valor_mensal_moagem,
         "Ritmo Mês": ritmo_moagem,
         "Ontem": valor_ontem_moagem,
         "Hoje": valor_hoje_moagem,
-        "Ritmo Dia": ritmo_moagem_dia,
-        #"Meta dia": 71000
+        "Ritmo Dia": ritmo_moagem_dia
     }
 
-    exibir_kpis_customizados(
-        valores=valores_kpis,
-        imagem_base64=base64_kpi,
-        imagem_tipo=tipo_kpi,
-        cor_valor="#2D3D70",
-        cor_label="#444",
-        fonte_valor="22px",
-        fonte_label="14px",
-        altura_imagem="26px",
-        margin_top="0px",
-        margin_bottom="10px",
-        padding_top_imagem="15px"
-    )
+    # Exibe os KPIs com a nova função
+    exibir_kpis_customizados(valores=valores_kpis)
+
     if not df_agg_moagem.empty:
-        st.plotly_chart(grafico_barra_moagem.update_layout(height=270), use_container_width=True)
+        st.plotly_chart(
+            grafico_barra_moagem.update_layout(height=270),
+            use_container_width=True
+        )
