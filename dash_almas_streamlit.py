@@ -472,9 +472,9 @@ df_base_mina = df_dados_mina
 # Grafico 1 - Contagem de Viajens
 df_agg_viagens = agregar_por_hora(
     df=df_base_mina,
-    valor_coluna='calculated_mass',
+    valor_coluna='viajens',
     grupo_material=None,
-    tipo_agregacao= 'count'
+    tipo_agregacao= 'sum'
 )
 
 grafico_numero_viagens = gerar_grafico_colunas(
@@ -883,9 +883,9 @@ valor_mensal_movimentacao_mina = acumulado_mensal(
 # 2 - Acumulado Viagens mina do mês
 valor_mensal_viagens = acumulado_mensal(
     df=df_dados_mina,
-    coluna_valor='calculated_mass',
+    coluna_valor='viajens',
     coluna_datahora='hora_completa',
-    tipo_agregacao='count'
+    tipo_agregacao='sum'
 )
 
 # 3 - Acumulado Britagem do mês
@@ -942,9 +942,9 @@ ritmo_movimentacao = ritmo_mensal(
 # 2 - Ritmo Britagem do mês
 ritmo_viagens = ritmo_mensal(
     df=df_dados_mina,
-    coluna_valor='calculated_mass',
+    coluna_valor='viajens',
     coluna_datahora='hora_completa',
-    tipo_agregacao='count'
+    tipo_agregacao='sum'
 )
 
 # 3 - Ritmo Britagem do mês
@@ -974,12 +974,12 @@ valor_ontem_movimentacao = acumulado_dia_anterior(
     tipo_agregacao='sum'
 )
 
-# 2 - Dia anterior movimentação de mina
+# 2 - Dia anterior numero de viajens de mina
 valor_ontem_viagens= acumulado_dia_anterior(
     df=df_dados_mina,
-    coluna_valor='calculated_mass',
+    coluna_valor='viajens',
     coluna_datahora='hora_completa',
-    tipo_agregacao='count'
+    tipo_agregacao='sum'
 )
 
 # 3 - Dia anterior Britagem
@@ -1012,9 +1012,9 @@ valor_hoje_movimentacao = acumulado_dia_atual(
 # 2 - Dia atual movimentação de mina
 valor_hoje_viagens= acumulado_dia_atual(
     df=df_dados_mina,
-    coluna_valor='calculated_mass',
+    coluna_valor='viajens',
     coluna_datahora='hora_completa',
-    tipo_agregacao='count'
+    tipo_agregacao='sum'
 )
 
 # 3 - Dia atual Britagem
@@ -1070,9 +1070,9 @@ ritmo_movimentacao_dia = ritmo_dia_atual(
 # 2 - Ritmo Britagem do dia
 ritmo_viagens_dia = ritmo_dia_atual(
     df=df_dados_mina,
-    coluna_valor='calculated_mass',
+    coluna_valor='viajens',
     coluna_datahora='hora_completa',
-    tipo_agregacao='count'
+    tipo_agregacao='sum'
 )
 
 # 3 - Ritmo Britagem do dia
