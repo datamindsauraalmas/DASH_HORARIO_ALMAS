@@ -53,6 +53,7 @@ def ler_dados_supabase(tabela: str, pagina_tamanho: int = 1000) -> pd.DataFrame:
 df_dados_mina = ler_dados_supabase("repositorio_mina_realizado")
 df_dados_planta = ler_dados_supabase("repositorio_planta_realizado")
 df_dados_mina_programa = ler_dados_supabase("repositorio_mina_programa")
+df_dados_planta_programa = ler_dados_supabase("repositorio_planta_programa")
 
 # ==============================================
 # Funções de agregação
@@ -911,6 +912,21 @@ valor_mensal_mina_programa = acumulado_mensal(
     tipo_agregacao='sum'
 )
 
+# 6 - Acumulado Planta Moagem Programa Mês
+valor_mensal_moagem_programa = acumulado_mensal(
+    df=df_dados_planta_programa,
+    coluna_valor='massa_moagem',
+    coluna_datahora='Data',
+    tipo_agregacao='sum'
+)
+
+# 7 - Acumulado Planta Britagem Programa Mês
+valor_mensal_britagem_programa = acumulado_mensal(
+    df=df_dados_planta_programa,
+    coluna_valor='massa_britagem',
+    coluna_datahora='Data',
+    tipo_agregacao='sum'
+)
 
 # Chamada das função de Ritmo do mês
 # ===================================
@@ -1021,6 +1037,21 @@ valor_hoje_moagem = acumulado_dia_atual(
 valor_hoje_mina_programa = acumulado_dia_atual(
     df=df_dados_mina_programa,
     coluna_valor='movimentacao_total',
+    coluna_datahora='Data',
+    tipo_agregacao='sum'
+)
+
+# 6 - Dia aual programa Britagem
+valor_hoje_britagem_programa = acumulado_dia_atual(
+    df=df_dados_planta_programa,
+    coluna_valor='massa_britagem',
+    coluna_datahora='Data',
+    tipo_agregacao='sum'
+)
+# 7 - Dia aual programa Moagem
+valor_hoje_moagem_programa = acumulado_dia_atual(
+    df=df_dados_planta_programa,
+    coluna_valor='massa_moagem',
     coluna_datahora='Data',
     tipo_agregacao='sum'
 )
@@ -1220,9 +1251,11 @@ with col3:
     valores_kpis = {
         rotulo_acumulado_kpi: valor_mensal_britagem,
         "Ritmo Mês": ritmo_britagem,
+        "Meta Mês": valor_mensal_britagem_programa,
         "Ontem": valor_ontem_britagem,
         "Hoje": valor_hoje_britagem,
-        "Ritmo Dia": ritmo_britagem_dia
+        "Ritmo Dia": ritmo_britagem_dia,
+        "Meta Dia": valor_hoje_britagem_programa
     }
 
     # Exibe os KPIs com a nova função
@@ -1238,9 +1271,11 @@ with col4:
     valores_kpis = {
         rotulo_acumulado_kpi: valor_mensal_moagem,
         "Ritmo Mês": ritmo_moagem,
+        "Meta Mês": valor_mensal_moagem_programa,
         "Ontem": valor_ontem_moagem,
         "Hoje": valor_hoje_moagem,
-        "Ritmo Dia": ritmo_moagem_dia
+        "Ritmo Dia": ritmo_moagem_dia,
+        "Meta Dia": valor_hoje_moagem_programa
     }
 
     # Exibe os KPIs com a nova função
